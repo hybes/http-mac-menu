@@ -9,9 +9,9 @@ const save = async () => {
     for (const input of inputs) {
         config[input.id] = input.value
     }
-    
+
     await api.saveConfig(config)
-    api.exit()
+    await api.exit()
 }
 
 const exit = async () => {
@@ -28,6 +28,11 @@ const loadConfig = async () => {
             el.value = config[setting]
     }
 }
+
+document.getElementById('externalLink').addEventListener('click', (event) => {
+    event.preventDefault(); // Prevent the default navigation
+    window.api.openExternal('https://docs.birdeye.so/reference/intro/authentication');
+  });
 
 window.addEventListener('DOMContentLoaded', loadConfig)
 

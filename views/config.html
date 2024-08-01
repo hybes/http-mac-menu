@@ -2,7 +2,7 @@
 <html>
 	<head>
 		<meta charset="UTF-8" />
-		<title>HTTP Mac Menu</title>
+		<title>SOL Wallet Tracker</title>
 		<link rel="stylesheet" href="../output.css" />
 		<style>
 			@font-face {
@@ -41,44 +41,23 @@
 			<form id="form" name="config" class="my-4 flex flex-col justify-center items-center">
 				<div class="flex flex-col gap-2 p-2 w-[700px] justify-center items-center border-b border-b-white/30">
 					<div class="flex gap-4 items-center">
-						<label class="w-[250px]" for="url">URL</label>
-						<input type="text" class="px-4 py-2 w-[400px] rounded-full placeholder:text-stone-500" id="url" placeholder="https://api.brth.uk/v2/example" />
+						<label class="w-[250px]" for="url">API Key</label>
+						<input type="text" class="px-4 py-2 w-[400px] rounded-full placeholder:text-stone-500" id="apiKey" placeholder="09019he0219h029he2s2d22fgh543" />
 					</div>
+					<a href="#" id="externalLink">
+						<p class="text-sm text-stone-500">How to get API Key?</p>
+					</a>
 				</div>
-				<div class="flex flex-col gap-4 p-2 w-[700px] justify-center items-center border-b border-b-white/30">
+				<div class="flex flex-col gap-2 p-2 w-[700px] justify-center items-center border-b border-b-white/30">
 					<div class="flex gap-4 items-center">
-						<label class="w-[250px]" for="url">Headers (Comma seperated)</label>
-						<input type="text" class="px-4 py-2 w-[400px] rounded-full placeholder:text-stone-500" id="headers" placeholder="X-API-Key: abCD12" />
-					</div>
-				</div>
-				<div class="flex flex-col gap-4 p-2 w-[700px] justify-center items-center border-b border-b-white/30">
-					<div class="flex gap-4 items-center">
-						<label class="w-[250px]" for="url">Multiplier</label>
-						<input type="text" class="px-4 py-2 w-[400px] rounded-full placeholder:text-stone-500" id="multiplier" placeholder="100" />
-					</div>
-				</div>
-				<div class="flex flex-col gap-4 p-2 w-[700px] justify-center items-center border-b border-b-white/30">
-					<div class="flex gap-4 items-center">
-						<label class="w-[250px]" for="url">Prefix</label>
-						<input type="text" class="px-4 py-2 w-[400px] rounded-full placeholder:text-stone-500" id="prefix" placeholder="Result:" />
-					</div>
-				</div>
-				<div class="flex flex-col gap-4 p-2 w-[700px] justify-center items-center border-b border-b-white/30">
-					<div class="flex gap-4 items-center">
-						<label class="w-[250px]" for="url">Timer</label>
-						<input type="text" class="px-4 py-2 w-[400px] rounded-full placeholder:text-stone-500" id="timer" placeholder="5000" />
-					</div>
-				</div>
-				<div class="flex flex-col gap-4 p-2 w-[700px] justify-center items-center border-b border-b-white/30">
-					<div class="flex gap-4 items-center">
-						<label class="w-[250px]" for="url">JSON path</label>
-						<input type="text" class="px-4 py-2 w-[400px] rounded-full placeholder:text-stone-500" id="json" placeholder="data.answer.result" />
+						<label class="w-[250px]" for="url">Wallet Address</label>
+						<input type="text" class="px-4 py-2 w-[400px] rounded-full placeholder:text-stone-500" id="address" placeholder="7bpworj3zrfzxrvBXsDomAJ6TrYPMoHgGyYBkCdpV46Z" />
 					</div>
 				</div>
 				<div class="flex flex-col gap-4 p-2 w-[700px] justify-center items-center">
 					<div class="flex gap-4 items-center">
-						<label class="w-[250px]" for="url">Character Length</label>
-						<input type="text" class="px-4 py-2 w-[400px] rounded-full placeholder:text-stone-500" id="length" placeholder="3" />
+						<label class="w-[250px]" for="url">Percentage Change</label>
+						<input type="text" class="px-4 py-2 w-[400px] rounded-full placeholder:text-stone-500" id="percent" placeholder="20" />
 					</div>
 				</div>
 				<input class="bg-blue-500 hover:bg-blue-600 w-[150px] py-2 rounded-full cursor-pointer" type="submit" id="saveConfig" value="Save" />

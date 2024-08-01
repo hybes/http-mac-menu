@@ -1,8 +1,8 @@
 {
-  "name": "cnnct-http-mac-menu",
-  "productName": "HTTP Mac Menu",
-  "version": "1.0.0",
-  "description": "An app to allow users to keep track of crypto in the tray.",
+  "name": "cnnct-sol-tracker",
+  "productName": "SOL Tracker",
+  "version": "1.0.1",
+  "description": "An app to allow users to keep track of a SOL wallet.",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
@@ -18,24 +18,21 @@
     "electron": "^22.0.0",
     "electron-builder": "^23.6.0"
   },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/hybes/http-mac-menu.git"
-  },
   "dependencies": {
     "@sentry/electron": "^4.14.0",
     "autoprefixer": "^10.4.16",
     "axios": "^1.2.2",
+    "bignumber.js": "^9.1.2",
     "electron-settings": "^4.0.2",
     "postcss": "^8.4.31",
     "tailwindcss": "^3.3.5"
   },
   "build": {
-    "appId": "cnnct.crypto-tracker",
-    "productName": "HTTP Mac Menu",
+    "appId": "cnnct.sol-tracker",
+    "productName": "SOL Tracker",
     "mac": {
       "icon": "./build/macIcon.icns",
-      "category": "cnnct.http-mac-menu",
+      "category": "cnnct.sol-tracker",
       "target": [
         {
           "target": "default",
