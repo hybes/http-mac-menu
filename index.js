@@ -8,6 +8,12 @@ const {
   nativeImage,
   ipcMain,
   shell,
+  clipboard,
+  net,
+  powerMonitor,
+  nativeTheme,
+  screen,
+  systemPreferences,
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -15,42 +21,67 @@ const settings = require('electron-settings');
 const axios = require('axios');
 const Sentry = require('@sentry/electron/main');
 
-const CONFIG_COUNT = 3;
-const CONFIG_NUMBERS = Array.from({ length: CONFIG_COUNT }, (_, i) => i + 1);
-const FIELDS = [
-  'type', // 'http' (default) or 'crypto'
-  // http
-  'url',
-  'headers',
-  'json',
-  'multiplier',
-  // crypto
-  'coin',
-  'holdings',
-  'currency',
-  'template',
-  // shared
-  'length',
-  'prefix',
-  'suffix',
-  'timer',
-];
-// Prefix and suffix keep their whitespace on purpose (" USD", "$ ").
-const UNTRIMMED_FIELDS = new Set(['prefix', 'suffix']);
+const {
+  FIELDS,
+  MAX_REQUESTS,
+  MAX_BACKOFF_MULTIPLIER,
+  MAX_BACKOFF_SECONDS,
+  MAX_ITEM_TITLE_CHARS,
+  MAX_TITLE_CHARS,
+  OFFLINE_RETRY_SECONDS,
+  REQUEST_TIMEOUT_MS,
+  SETTINGS_SCHEMA_VERSION,
+  TITLE_SEPARATOR,
+  PLACEHOLDER_TITLE,
+  PENDING_TITLE,
+} = require('./lib/constants');
+const {
+  DEFAULT_INDICATOR,
+  INDICATOR_STYLES,
+  MARKS,
+  normalizeIndicator,
+  toText,
+} = require('./lib/indicators');
+const { TrayImageRenderer } = require('./lib/tray-image');
+const {
+  formatGain,
+  formatHttpValue,
+  formatMoney,
+  formatPercent,
+  parseDecimals,
+  parseHeaders,
+  parseRefreshSeconds,
+  renderTemplate,
+  resolveJsonPath,
+  sanitizeConfig,
+  toNumber,
+  truncate,
+} = require('./lib/format');
+const { PriceHistory } = require('./lib/price-history');
+const {
+  convertLegacyMillisecondTimers,
+  displayName,
+  isConfigured,
+  makeRequest,
+  migrateNumberedSettings,
+  normalizeRequests,
+} = require('./lib/requests');
 
-const MIN_REFRESH_SECONDS = { http: 5, crypto: 30 };
-const DEFAULT_REFRESH_SECONDS = { http: 5, crypto: 60 };
-// After repeated failures the refresh interval doubles, up to this multiple.
-const MAX_BACKOFF_MULTIPLIER = 8;
-const MAX_BACKOFF_SECONDS = 10 * 60;
-const REQUEST_TIMEOUT_MS = 15000;
 const MAX_LOG_BYTES = 10 * 1024 * 1024;
-const TITLE_SEPARATOR = ' | ';
-const PLACEHOLDER_TITLE = 'HTTP Menu';
-const PENDING_TITLE = '…';
-const ERROR_MARK = '⚠';
-const UNAVAILABLE = '–';
 const CONFIG_VIEW = path.join(__dirname, 'views/config.html');
+// Wi-Fi takes a moment to reassociate after the lid opens.
+const WAKE_REFRESH_DELAY_MS = 3000;
+
+// The settings window is sized to its content by the renderer; these only
+// bound it. Height is a starting guess, replaced as soon as the page loads.
+const WINDOW_WIDTH = 520;
+const WINDOW_MIN_HEIGHT = 240;
+const WINDOW_START_HEIGHT = 560;
+// Leave room for the menu bar and a bit of breathing space.
+const WINDOW_SCREEN_MARGIN = 80;
+
+const windowBackground = () =>
+  nativeTheme.shouldUseDarkColors ? '#1e1e1e' : '#ececec';
 
 if (process.env.NODE_ENV !== 'development') {
   Sentry.init({
@@ -60,12 +91,19 @@ if (process.env.NODE_ENV !== 'development') {
 
 const logFilePath = path.join(app.getPath('userData'), 'http-mac-menu.log');
 
+// Sentinel id for the settings window when it is adding a request that does
+// not exist yet; nothing is stored until it is saved.
+const NEW_REQUEST_ID = 'new';
+
 let tray = null;
 let configWindow = null;
-let settingsCache = {};
+let requests = [];
+let indicator = DEFAULT_INDICATOR;
+let paused = false;
+const trayRenderer = new TrayImageRenderer();
 const refreshTimers = {};
 const inFlight = new Set();
-// configNumber -> { value, error, updatedAt }
+// request id -> { value, error, offline, updatedAt, failures }
 const status = {};
 
 // ---------------------------------------------------------------------------
@@ -74,9 +112,6 @@ const status = {};
 
 const timestamp = () =>
   new Date().toISOString().replace('T', ' ').substring(0, 19);
-
-const truncate = (text, max) =>
-  text.length > max ? `${text.slice(0, max)}…` : text;
 
 const log = (line) => {
   try {
@@ -93,107 +128,56 @@ const log = (line) => {
 // Settings
 // ---------------------------------------------------------------------------
 
-const configKey = (configNumber, field) => `${field}${configNumber}`;
+const requestIds = () => requests.map((request) => request.id);
 
-const getConfig = (configNumber) =>
-  Object.fromEntries(
-    FIELDS.map((field) => [
-      field,
-      settingsCache[configKey(configNumber, field)] ?? '',
-    ])
+const findRequest = (id) => requests.find((request) => request.id === id);
+
+const indexOfRequest = (id) =>
+  requests.findIndex((request) => request.id === id);
+
+const nameFor = (id) => {
+  const index = indexOfRequest(id);
+  return index === -1 ? 'Request' : displayName(requests[index], index);
+};
+
+const isCrypto = (request) => request.type === 'crypto';
+
+const isReady = (id) => {
+  const request = findRequest(id);
+  return Boolean(request && isConfigured(request));
+};
+
+const saveSettings = () =>
+  settings.set({
+    schemaVersion: SETTINGS_SCHEMA_VERSION,
+    indicator,
+    requests,
+  });
+
+// Schema 2 replaced three fixed numbered slots with a list the user controls.
+// Older files are read once, converted, and written back in the new shape.
+const loadSettings = async () => {
+  const stored = (await settings.get()) || {};
+  const version = Number(stored.schemaVersion);
+
+  indicator = normalizeIndicator(stored.indicator);
+
+  if (version >= SETTINGS_SCHEMA_VERSION) {
+    requests = normalizeRequests(stored.requests);
+    return;
+  }
+
+  const legacy = version >= 1 ? stored : convertLegacyMillisecondTimers(stored);
+  requests = migrateNumberedSettings(legacy);
+  await saveSettings();
+  log(
+    `Migrated settings to schema ${SETTINGS_SCHEMA_VERSION} (${requests.length} request(s) kept)`
   );
-
-const isCrypto = (cfg) => cfg.type === 'crypto';
-
-const isConfigured = (configNumber) => {
-  const cfg = getConfig(configNumber);
-  const source = isCrypto(cfg) ? cfg.coin : cfg.url;
-  return Boolean(String(source ?? '').trim());
-};
-
-const persistSettings = async (changes) => {
-  settingsCache = { ...settingsCache, ...changes };
-  await settings.set(settingsCache);
-};
-
-const parseRefreshSeconds = (raw, type) => {
-  const kind = type === 'crypto' ? 'crypto' : 'http';
-  const seconds = Number(raw);
-  if (!Number.isFinite(seconds) || seconds <= 0) {
-    return DEFAULT_REFRESH_SECONDS[kind];
-  }
-  return Math.max(MIN_REFRESH_SECONDS[kind], Math.round(seconds));
-};
-
-const validConfigNumber = (value) => {
-  const configNumber = Number(value);
-  if (!CONFIG_NUMBERS.includes(configNumber)) {
-    throw new Error(`Invalid request number: ${value}`);
-  }
-  return configNumber;
-};
-
-const sanitizeConfig = (values) => {
-  const clean = {};
-  for (const field of FIELDS) {
-    const raw = values && values[field] != null ? String(values[field]) : '';
-    clean[field] = UNTRIMMED_FIELDS.has(field) ? raw : raw.trim();
-  }
-  clean.type = clean.type === 'crypto' ? 'crypto' : 'http';
-  if (clean.timer) {
-    clean.timer = String(parseRefreshSeconds(clean.timer, clean.type));
-  }
-  return clean;
-};
-
-// Older versions stored junk button values and treated the refresh value as
-// milliseconds even though the UI asked for seconds. Tidy that up once.
-const migrateSettings = async () => {
-  const changes = {};
-  let dirty = false;
-
-  for (const key of Object.keys(settingsCache)) {
-    if (/^(saveConfig|clearConfig)\d+$/.test(key) || key === 'timer') {
-      delete settingsCache[key];
-      dirty = true;
-    }
-  }
-
-  for (const configNumber of CONFIG_NUMBERS) {
-    const key = configKey(configNumber, 'timer');
-    const raw = Number(settingsCache[key]);
-    if (Number.isFinite(raw) && raw >= 1000) {
-      changes[key] = String(
-        Math.max(MIN_REFRESH_SECONDS.http, Math.round(raw / 1000))
-      );
-      dirty = true;
-    }
-  }
-
-  if (dirty) {
-    await persistSettings(changes);
-    log('Migrated settings from a previous version');
-  }
 };
 
 // ---------------------------------------------------------------------------
-// Shared formatting helpers
+// Errors
 // ---------------------------------------------------------------------------
-
-const toNumber = (value) => {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-  if (typeof value === 'string' && value.trim() !== '') {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-};
-
-const parseDecimals = (raw) => {
-  const decimals = toNumber(raw);
-  if (decimals === null) return null;
-  return Math.min(20, Math.max(0, Math.round(decimals)));
-};
 
 const describeError = (err) => {
   if (axios.isAxiosError(err)) {
@@ -209,69 +193,6 @@ const describeError = (err) => {
 // ---------------------------------------------------------------------------
 // HTTP source
 // ---------------------------------------------------------------------------
-
-const parseHeaders = (raw) => {
-  const headers = {};
-  String(raw || '')
-    .split(/[\n,]/)
-    .forEach((part) => {
-      const index = part.indexOf(':');
-      if (index === -1) return;
-      const key = part.slice(0, index).trim();
-      const value = part.slice(index + 1).trim();
-      if (key) headers[key] = value;
-    });
-  return headers;
-};
-
-const resolveJsonPath = (data, rawPath) => {
-  const tokens = String(rawPath)
-    .replace(/\[(\d+)\]/g, '.$1')
-    .split('.')
-    .map((token) => token.trim())
-    .filter(Boolean);
-
-  let value = data;
-  for (const token of tokens) {
-    if (value === null || typeof value !== 'object' || !(token in value)) {
-      throw new Error(
-        `JSON path "${rawPath}" not found in response (stopped at "${token}")`
-      );
-    }
-    value = value[token];
-  }
-  return value;
-};
-
-const formatHttpValue = (raw, cfg) => {
-  const multiplier = toNumber(cfg.multiplier);
-  const decimals = parseDecimals(cfg.length);
-  const numeric = toNumber(raw);
-
-  let text;
-  if (numeric !== null && (multiplier !== null || decimals !== null)) {
-    const value = multiplier !== null ? numeric * multiplier : numeric;
-    if (multiplier !== null) {
-      // A multiplier also switches on locale formatting (12000 -> 12,000).
-      const options =
-        decimals !== null
-          ? { minimumFractionDigits: decimals, maximumFractionDigits: decimals }
-          : {};
-      text = value.toLocaleString(undefined, options);
-    } else {
-      text = value.toFixed(decimals);
-    }
-  } else {
-    text =
-      raw !== null && typeof raw === 'object'
-        ? JSON.stringify(raw)
-        : String(raw);
-    // For non-numeric values "decimals" acts as a maximum length.
-    if (decimals !== null && decimals > 0) text = text.slice(0, decimals);
-  }
-
-  return `${cfg.prefix || ''}${text}${cfg.suffix || ''}`;
-};
 
 const fetchHttpValue = async (cfg) => {
   const url = String(cfg.url || '').trim();
@@ -365,10 +286,9 @@ const API_PERIODS = {
 };
 // Periods worked out from our own price samples (minutes).
 const LOCAL_PERIODS = { '1m': 1, '5m': 5, '15m': 15, '30m': 30 };
-const HISTORY_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 
 const coinIdCache = new Map(); // user input (lowercased) -> CoinGecko id
-const priceHistory = {}; // `${id}:${currency}` -> [{ t, p }]
+const priceHistory = new PriceHistory();
 
 const coingecko = (endpoint, params) =>
   axios.get(`${COINGECKO_API}${endpoint}`, {
@@ -426,67 +346,9 @@ const resolveMarket = async (input, currency) => {
   return market;
 };
 
-const recordSample = (key, price) => {
-  const now = Date.now();
-  const samples = (priceHistory[key] || []).filter(
-    (sample) => now - sample.t <= HISTORY_MAX_AGE_MS
-  );
-  samples.push({ t: now, p: price });
-  priceHistory[key] = samples;
-};
-
-// Percentage change versus the newest sample that is at least `minutes` old
-// (and no more than twice that), or null if we have not been running long
-// enough / refreshing often enough.
-const localChange = (key, minutes, price) => {
-  const target = Date.now() - minutes * 60000;
-  const sample = (priceHistory[key] || [])
-    .filter((s) => s.t <= target && s.t >= target - minutes * 60000)
-    .pop();
-  if (!sample || !sample.p) return null;
-  return ((price - sample.p) / sample.p) * 100;
-};
-
-const formatMoney = (value, currency, decimals) => {
-  const code = String(currency || 'gbp').toUpperCase();
-  const abs = Math.abs(value);
-  let options;
-  if (decimals !== null) {
-    options = {
-      minimumFractionDigits: decimals,
-      maximumFractionDigits: decimals,
-    };
-  } else if (abs > 0 && abs < 1) {
-    options = { maximumSignificantDigits: 4 };
-  } else {
-    options = { minimumFractionDigits: 2, maximumFractionDigits: 2 };
-  }
-  try {
-    return value.toLocaleString(undefined, {
-      style: 'currency',
-      currency: code,
-      ...options,
-    });
-  } catch {
-    // Not an ISO currency (e.g. "sats", "eth") – fall back to a plain number.
-    return `${value.toLocaleString(undefined, options)} ${code}`;
-  }
-};
-
-const formatPercent = (pct) =>
-  Number.isFinite(pct)
-    ? `${pct >= 0 ? '▲' : '▼'}${Math.abs(pct).toFixed(2)}%`
-    : UNAVAILABLE;
-
-// Money gained/lost over a period, given the percentage move and today's value.
-const formatGain = (pct, current, currency, decimals) => {
-  if (!Number.isFinite(pct)) return UNAVAILABLE;
-  const previous = pct <= -100 ? 0 : current / (1 + pct / 100);
-  const delta = current - previous;
-  return `${delta >= 0 ? '▲' : '▼'}${formatMoney(Math.abs(delta), currency, decimals)}`;
-};
-
-const fetchCryptoValue = async (cfg) => {
+// `record` is off for the Test button so trying out a config does not add
+// samples that the real minute-scale changes would then be measured against.
+const fetchCryptoValue = async (cfg, { record = true } = {}) => {
   const currency =
     String(cfg.currency || '')
       .trim()
@@ -516,7 +378,7 @@ const fetchCryptoValue = async (cfg) => {
   const current = holdings !== null ? holdings * price : price;
   const decimals = parseDecimals(cfg.length);
   const key = `${market.id}:${currency}`;
-  recordSample(key, price);
+  if (record) priceHistory.record(key, price);
 
   const values = {
     symbol: String(market.symbol || '').toUpperCase(),
@@ -526,7 +388,7 @@ const fetchCryptoValue = async (cfg) => {
     balance: formatMoney(current, currency, decimals),
   };
   for (const [label, minutes] of Object.entries(LOCAL_PERIODS)) {
-    const pct = localChange(key, minutes, price);
+    const pct = priceHistory.changeSince(key, minutes, price);
     values[`change${label}`] = formatPercent(pct);
     values[`gain${label}`] = formatGain(pct, current, currency, decimals);
   }
@@ -541,12 +403,9 @@ const fetchCryptoValue = async (cfg) => {
     (holdings !== null
       ? '{symbol} {balance} {change24h}'
       : '{symbol} {price} {change24h}');
-  const text = template.replace(/\{(\w+)\}/g, (match, name) =>
-    name in values ? values[name] : match
-  );
 
   return {
-    text: `${cfg.prefix || ''}${text}${cfg.suffix || ''}`,
+    text: `${cfg.prefix || ''}${renderTemplate(template, values)}${cfg.suffix || ''}`,
     data: {
       id: market.id,
       currency,
@@ -560,43 +419,55 @@ const fetchCryptoValue = async (cfg) => {
 // Fetching
 // ---------------------------------------------------------------------------
 
-const fetchValue = (cfg) =>
-  isCrypto(cfg) ? fetchCryptoValue(cfg) : fetchHttpValue(cfg);
+const fetchValue = (request, options) =>
+  isCrypto(request)
+    ? fetchCryptoValue(request, options)
+    : fetchHttpValue(request);
 
-const refreshConfig = async (configNumber) => {
-  if (!isConfigured(configNumber)) {
-    delete status[configNumber];
+const refreshRequest = async (id) => {
+  if (!isReady(id)) {
+    delete status[id];
     return;
   }
-  if (inFlight.has(configNumber)) return;
-  inFlight.add(configNumber);
+  if (inFlight.has(id)) return;
 
+  const previous = status[id] || {};
+
+  // A dropped network is not the endpoint's fault: keep the last value, leave
+  // the failure count alone so we do not back off, and stay quiet in the log.
+  if (!net.isOnline()) {
+    status[id] = { ...previous, offline: true };
+    return;
+  }
+
+  inFlight.add(id);
   try {
-    const { text, data } = await fetchValue(getConfig(configNumber));
-    status[configNumber] = {
+    const { text, data } = await fetchValue(findRequest(id));
+    status[id] = {
       value: text,
       error: null,
+      offline: false,
       updatedAt: new Date(),
       failures: 0,
     };
     log(
-      `Success (Request ${configNumber}): showing "${text}" from ${truncate(JSON.stringify(data), 500)}`
+      `Success (${nameFor(id)}): showing "${toText(text)}" from ${truncate(JSON.stringify(data), 500)}`
     );
   } catch (err) {
     const message = describeError(err);
-    const previous = status[configNumber] || {};
-    status[configNumber] = {
+    status[id] = {
       value: previous.value ?? null,
       updatedAt: previous.updatedAt ?? null,
       error: message,
+      offline: false,
       failures: (previous.failures || 0) + 1,
     };
-    log(`Error (Request ${configNumber}): ${message}`);
+    log(`Error (${nameFor(id)}): ${message}`);
     // Network and HTTP failures are expected from time to time and are already
     // in the local log; only report genuinely unexpected errors.
     if (!axios.isAxiosError(err)) Sentry.captureException(err);
   } finally {
-    inFlight.delete(configNumber);
+    inFlight.delete(id);
   }
 };
 
@@ -604,36 +475,64 @@ const refreshConfig = async (configNumber) => {
 // Scheduling
 // ---------------------------------------------------------------------------
 
-const scheduleRefresh = (configNumber) => {
-  clearTimeout(refreshTimers[configNumber]);
-  delete refreshTimers[configNumber];
-  if (!isConfigured(configNumber)) return;
+const nextRefreshSeconds = (id) => {
+  const request = findRequest(id);
+  const base = parseRefreshSeconds(request.timer, request.type);
+  const current = status[id] || {};
 
-  const cfg = getConfig(configNumber);
-  const base = parseRefreshSeconds(cfg.timer, cfg.type);
+  // While offline there is nothing to hammer — checking the local flag often
+  // just means we pick up again quickly once the network is back.
+  if (current.offline) return Math.min(base, OFFLINE_RETRY_SECONDS);
+
   // Back off while a request keeps failing so we don't hammer a broken or
   // rate-limited endpoint: base, 2x, 4x, 8x … capped.
-  const failures = (status[configNumber] && status[configNumber].failures) || 0;
-  const multiplier = Math.min(2 ** failures, MAX_BACKOFF_MULTIPLIER);
-  const seconds = Math.min(base * multiplier, MAX_BACKOFF_SECONDS);
-  refreshTimers[configNumber] = setTimeout(async () => {
-    await refreshConfig(configNumber);
-    renderTray();
-    scheduleRefresh(configNumber);
-  }, seconds * 1000);
+  const multiplier = Math.min(
+    2 ** (current.failures || 0),
+    MAX_BACKOFF_MULTIPLIER
+  );
+  return Math.min(base * multiplier, MAX_BACKOFF_SECONDS);
 };
 
-const startConfig = async (configNumber) => {
-  clearTimeout(refreshTimers[configNumber]);
-  await refreshConfig(configNumber);
+const stopRefresh = (id) => {
+  clearTimeout(refreshTimers[id]);
+  delete refreshTimers[id];
+};
+
+const scheduleRefresh = (id) => {
+  stopRefresh(id);
+  if (paused || !isReady(id)) return;
+
+  refreshTimers[id] = setTimeout(
+    async () => {
+      await refreshRequest(id);
+      renderTray();
+      scheduleRefresh(id);
+    },
+    nextRefreshSeconds(id) * 1000
+  );
+};
+
+const startRequest = async (id) => {
+  stopRefresh(id);
+  await refreshRequest(id);
   renderTray();
-  scheduleRefresh(configNumber);
+  scheduleRefresh(id);
 };
 
 const refreshAll = async () => {
-  await Promise.all(
-    CONFIG_NUMBERS.map((configNumber) => startConfig(configNumber))
-  );
+  await Promise.all(requestIds().map((id) => startRequest(id)));
+};
+
+const setPaused = (value) => {
+  paused = value;
+  if (paused) {
+    for (const id of requestIds()) stopRefresh(id);
+    log('Updates paused');
+    renderTray();
+  } else {
+    log('Updates resumed');
+    refreshAll();
+  }
 };
 
 // ---------------------------------------------------------------------------
@@ -643,43 +542,105 @@ const refreshAll = async () => {
 const formatTime = (date) =>
   date ? date.toLocaleTimeString(undefined, { hour12: false }) : '';
 
-const trayTitleFor = (configNumber) => {
-  const current = status[configNumber];
+// Why a request is not showing a fresh value, or null when it is fine.
+const problemWith = (current) =>
+  current.offline ? 'No network connection' : current.error || null;
+
+// Keeps the direction markers in place: the menu bar turns them into icons.
+const trayTitleFor = (id) => {
+  const current = status[id];
   if (!current) return PENDING_TITLE;
-  if (current.error) {
-    return current.value ? `${ERROR_MARK} ${current.value}` : ERROR_MARK;
+  const value =
+    current.value == null
+      ? null
+      : truncate(String(current.value), MAX_ITEM_TITLE_CHARS);
+  if (problemWith(current)) {
+    return value ? `${MARKS.warn} ${value}` : MARKS.warn;
   }
-  return current.value;
+  return value ?? PENDING_TITLE;
 };
 
-const tooltipFor = (configNumber) => {
-  const current = status[configNumber];
-  if (!current) return `Request ${configNumber}: loading…`;
-  if (current.error) {
+const tooltipFor = (id) => {
+  const name = nameFor(id);
+  const current = status[id];
+  if (!current) return `${name}: loading…`;
+  const problem = problemWith(current);
+  if (problem) {
     const last = current.value
       ? ` (showing value from ${formatTime(current.updatedAt)})`
       : '';
-    return `Request ${configNumber}: ${current.error}${last}`;
+    return `${name}: ${problem}${last}`;
   }
-  return `Request ${configNumber}: ${current.value} (updated ${formatTime(current.updatedAt)})`;
+  return `${name}: ${toText(current.value)} (updated ${formatTime(current.updatedAt)})`;
 };
 
-const menuLabelFor = (configNumber) => {
-  if (!isConfigured(configNumber)) return `Request ${configNumber}: not set up`;
-  const current = status[configNumber];
-  if (!current) return `Request ${configNumber}: loading…`;
-  const text = current.error ? `${ERROR_MARK} ${current.error}` : current.value;
-  return `Request ${configNumber}: ${truncate(String(text), 60)}`;
+const menuLabelFor = (id) => {
+  const name = nameFor(id);
+  if (!isReady(id)) return `${name}: not set up`;
+  const current = status[id];
+  if (!current) return `${name}: loading…`;
+  const problem = problemWith(current);
+  const text = problem ? `⚠ ${problem}` : toText(current.value);
+  return `${name}: ${truncate(String(text), 60)}`;
+};
+
+const copyableIds = () =>
+  requestIds().filter((id) => isReady(id) && status[id] && status[id].value);
+
+const buildCopyItem = () => {
+  const copyable = copyableIds();
+  if (!copyable.length) return { label: 'Copy Value', enabled: false };
+
+  const submenu = copyable.map((id) => ({
+    label: truncate(`${nameFor(id)}: ${toText(status[id].value)}`, 60),
+    click: () => clipboard.writeText(toText(status[id].value)),
+  }));
+
+  if (copyable.length > 1) {
+    submenu.push(
+      { type: 'separator' },
+      {
+        label: 'All Values',
+        click: () =>
+          clipboard.writeText(
+            copyable.map((id) => toText(status[id].value)).join(TITLE_SEPARATOR)
+          ),
+      }
+    );
+  }
+  return { label: 'Copy Value', submenu };
 };
 
 const buildMenu = () =>
   Menu.buildFromTemplate([
-    ...CONFIG_NUMBERS.map((configNumber) => ({
-      label: menuLabelFor(configNumber),
-      click: () => openConfig(configNumber),
-    })),
+    ...(requests.length
+      ? requests.map((request) => ({
+          label: menuLabelFor(request.id),
+          click: () => openConfig(request.id),
+        }))
+      : [{ label: 'No requests yet', enabled: false }]),
+    {
+      label: 'Add Request…',
+      enabled: requests.length < MAX_REQUESTS,
+      click: () => openConfig(NEW_REQUEST_ID),
+    },
     { type: 'separator' },
     { label: 'Refresh Now', click: refreshAll },
+    buildCopyItem(),
+    {
+      label: paused ? 'Resume Updates' : 'Pause Updates',
+      enabled: requests.length > 0,
+      click: () => setPaused(!paused),
+    },
+    {
+      label: 'Rise / Fall Icon',
+      submenu: INDICATOR_STYLES.map((style) => ({
+        label: style.label,
+        type: 'radio',
+        checked: indicator === style.id,
+        click: () => setIndicator(style.id),
+      })),
+    },
     {
       label: 'Launch at Login',
       type: 'checkbox',
@@ -696,46 +657,114 @@ const buildMenu = () =>
   ]);
 
 let lastRendered = { title: null, tooltip: null, menu: null };
+// Drawing the menu bar image is asynchronous, so a slow render must not be
+// allowed to land on top of a newer value.
+let renderToken = 0;
+
+const emptyTrayIcon = () =>
+  process.platform === 'darwin'
+    ? nativeImage.createEmpty()
+    : nativeImage.createFromPath(path.join(__dirname, 'assets/trayWin.png'));
+
+const showTrayText = (text) => {
+  tray.setImage(emptyTrayIcon());
+  tray.setTitle(toText(text));
+};
+
+// Icons need the menu bar contents drawn as a template image. Anything that
+// goes wrong there falls back to text, so the menu bar is never blank.
+const showTrayContents = async (items, text) => {
+  const token = ++renderToken;
+  if (process.platform !== 'darwin' || indicator === 'text' || !items.length) {
+    showTrayText(text);
+    return;
+  }
+
+  const image = await trayRenderer.render(items, indicator);
+  if (token !== renderToken || !tray || tray.isDestroyed()) return;
+  if (!image) {
+    showTrayText(text);
+    return;
+  }
+  tray.setTitle('');
+  tray.setImage(image);
+};
 
 const renderTray = () => {
   if (!tray || tray.isDestroyed()) return;
-  const configured = CONFIG_NUMBERS.filter(isConfigured);
+  const ready = requestIds().filter(isReady);
 
-  const title = configured.length
-    ? configured.map(trayTitleFor).join(TITLE_SEPARATOR)
+  const items = ready.length ? ready.map(trayTitleFor) : [PLACEHOLDER_TITLE];
+  const title = ready.length
+    ? truncate(ready.map(trayTitleFor).join(TITLE_SEPARATOR), MAX_TITLE_CHARS)
     : PLACEHOLDER_TITLE;
-  const tooltip = configured.length
-    ? configured.map(tooltipFor).join('\n')
+  const tooltip = ready.length
+    ? [...ready.map(tooltipFor), ...(paused ? ['Updates paused'] : [])].join(
+        '\n'
+      )
     : 'No requests set up yet — click to add one';
   const menu = [
-    ...CONFIG_NUMBERS.map(menuLabelFor),
+    ...requestIds().map(menuLabelFor),
+    ...copyableIds().map((id) => `copy:${status[id].value}`),
+    `count:${requests.length}`,
+    `paused:${paused}`,
+    `indicator:${indicator}`,
     `login:${app.getLoginItemSettings().openAtLogin}`,
   ].join('\n');
 
-  if (title !== lastRendered.title) tray.setTitle(title);
+  if (title !== lastRendered.title) showTrayContents(items, title);
   if (tooltip !== lastRendered.tooltip) tray.setToolTip(tooltip);
   // Replacing the menu closes it if it is open, so only do it when it changed.
   if (menu !== lastRendered.menu) tray.setContextMenu(buildMenu());
   lastRendered = { title, tooltip, menu };
 };
 
+const setIndicator = async (style) => {
+  indicator = normalizeIndicator(style);
+  await saveSettings();
+  log(`Indicator style set to ${indicator}`);
+  lastRendered = { title: null, tooltip: null, menu: null };
+  renderTray();
+};
+
 const createTray = () => {
-  const icon =
-    process.platform === 'darwin'
-      ? nativeImage.createEmpty()
-      : nativeImage.createFromPath(path.join(__dirname, 'assets/trayWin.png'));
-  tray = new Tray(icon);
+  tray = new Tray(emptyTrayIcon());
   tray.setTitle('Loading…');
   tray.setToolTip('Loading…');
   tray.setContextMenu(buildMenu());
+  lastRendered = { title: null, tooltip: null, menu: null };
 };
 
 // ---------------------------------------------------------------------------
 // Config window
 // ---------------------------------------------------------------------------
 
-const openConfig = (configNumber) => {
-  const query = { n: String(configNumber) };
+// The settings window only ever shows its own page; anything else is either a
+// mistake or something a response has talked the renderer into loading.
+const isConfigUrl = (url) => {
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.protocol === 'file:' &&
+      decodeURIComponent(parsed.pathname) === CONFIG_VIEW
+    );
+  } catch {
+    return false;
+  }
+};
+
+const hardenWindow = (contents) => {
+  contents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  contents.on('will-navigate', (event, url) => {
+    if (!isConfigUrl(url)) event.preventDefault();
+  });
+};
+
+const openConfig = (id) => {
+  const query = { id: String(id) };
 
   if (configWindow && !configWindow.isDestroyed()) {
     configWindow.loadFile(CONFIG_VIEW, { query });
@@ -745,13 +774,20 @@ const openConfig = (configNumber) => {
   }
 
   configWindow = new BrowserWindow({
-    width: 560,
-    height: 820,
-    minWidth: 480,
-    minHeight: 600,
+    width: WINDOW_WIDTH,
+    height: WINDOW_START_HEIGHT,
+    minHeight: WINDOW_MIN_HEIGHT,
     show: false,
+    // A settings panel, not a document window: fixed width, no zoom button,
+    // and the traffic lights sit over the content instead of on their own bar.
+    resizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 20, y: 8 },
+    backgroundColor: windowBackground(),
     autoHideMenuBar: true,
-    title: `Request ${configNumber} – HTTP Mac Menu`,
+    title: 'HTTP Mac Menu',
     webPreferences: {
       preload: path.join(__dirname, 'scripts/config.preload.js'),
     },
@@ -767,6 +803,8 @@ const openConfig = (configNumber) => {
   configWindow.on('closed', () => {
     configWindow = null;
   });
+
+  hardenWindow(configWindow.webContents);
 
   configWindow.webContents.on('before-input-event', (event, input) => {
     const devtools =
@@ -791,36 +829,65 @@ const closeConfigWindow = () => {
 // IPC
 // ---------------------------------------------------------------------------
 
-const registerIpc = () => {
-  ipcMain.handle('config:load', (_event, configNumber) =>
-    getConfig(validConfigNumber(configNumber))
-  );
+const blankRequest = () =>
+  Object.fromEntries(FIELDS.map((field) => [field, '']));
 
-  ipcMain.handle('config:save', async (_event, configNumber, values) => {
-    const n = validConfigNumber(configNumber);
+const registerIpc = () => {
+  ipcMain.handle('config:load', (_event, id) => {
+    const request = findRequest(id);
+    if (!request) {
+      // Either "Add Request…" or a request removed from another window.
+      return {
+        id: NEW_REQUEST_ID,
+        values: { ...blankRequest(), type: 'http' },
+        position: requests.length + 1,
+        isNew: true,
+      };
+    }
+    return {
+      id: request.id,
+      values: request,
+      position: indexOfRequest(id) + 1,
+      isNew: false,
+    };
+  });
+
+  ipcMain.handle('config:save', async (_event, id, values) => {
     const clean = sanitizeConfig(values);
-    const changes = Object.fromEntries(
-      FIELDS.map((field) => [configKey(n, field), clean[field]])
-    );
-    await persistSettings(changes);
-    delete status[n];
-    log(`Saved Request ${n}`);
+    const index = indexOfRequest(id);
+
+    let savedId;
+    if (index === -1) {
+      if (requests.length >= MAX_REQUESTS) {
+        return { ok: false, error: `You can have at most ${MAX_REQUESTS}.` };
+      }
+      const request = makeRequest(clean, requests);
+      requests.push(request);
+      savedId = request.id;
+    } else {
+      requests[index] = { id, ...clean };
+      savedId = id;
+      delete status[id];
+    }
+
+    await saveSettings();
+    log(`Saved ${nameFor(savedId)}`);
     closeConfigWindow();
     renderTray();
-    await startConfig(n);
+    await startRequest(savedId);
     return { ok: true };
   });
 
-  ipcMain.handle('config:clear', async (_event, configNumber) => {
-    const n = validConfigNumber(configNumber);
-    const changes = Object.fromEntries(
-      FIELDS.map((field) => [configKey(n, field), ''])
-    );
-    await persistSettings(changes);
-    clearTimeout(refreshTimers[n]);
-    delete refreshTimers[n];
-    delete status[n];
-    log(`Cleared Request ${n}`);
+  ipcMain.handle('config:remove', async (_event, id) => {
+    const index = indexOfRequest(id);
+    if (index === -1) return { ok: true };
+
+    const name = nameFor(id);
+    requests.splice(index, 1);
+    stopRefresh(id);
+    delete status[id];
+    await saveSettings();
+    log(`Removed ${name}`);
     closeConfigWindow();
     renderTray();
     return { ok: true };
@@ -828,14 +895,48 @@ const registerIpc = () => {
 
   ipcMain.handle('config:test', async (_event, values) => {
     try {
-      const { text } = await fetchValue(sanitizeConfig(values));
-      return { ok: true, value: text };
+      const { text } = await fetchValue(sanitizeConfig(values), {
+        record: false,
+      });
+      // The settings window shows this as plain text, so the direction
+      // markers become characters rather than icons.
+      return { ok: true, value: toText(text) };
     } catch (err) {
       return { ok: false, error: describeError(err) };
     }
   });
 
   ipcMain.handle('config:close', () => closeConfigWindow());
+
+  // The renderer measures its own content and asks the window to match, so the
+  // settings never scroll. Only a screen too short for the form clamps it.
+  ipcMain.handle('config:fit', (event, height) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return { clamped: false };
+    const wanted = Math.ceil(Number(height));
+    if (!Number.isFinite(wanted) || wanted <= 0) return { clamped: false };
+
+    const { workAreaSize } = screen.getDisplayMatching(win.getBounds());
+    const available = Math.max(
+      WINDOW_MIN_HEIGHT,
+      workAreaSize.height - WINDOW_SCREEN_MARGIN
+    );
+    const target = Math.min(Math.max(wanted, WINDOW_MIN_HEIGHT), available);
+    if (win.getContentSize()[1] !== target) {
+      win.setContentSize(WINDOW_WIDTH, target, false);
+    }
+    return { clamped: wanted > target };
+  });
+
+  // Matching the user's own accent colour is most of what makes a window feel
+  // like it belongs to the system rather than to a browser.
+  ipcMain.handle('config:accent', () => {
+    try {
+      return systemPreferences.getAccentColor();
+    } catch {
+      return null;
+    }
+  });
 };
 
 // ---------------------------------------------------------------------------
@@ -843,18 +944,30 @@ const registerIpc = () => {
 // ---------------------------------------------------------------------------
 
 const init = async () => {
-  settingsCache = (await settings.get()) || {};
-  await migrateSettings();
+  await loadSettings();
   log(`Started HTTP Mac Menu ${app.getVersion()}`);
 
   app.setAppUserModelId('HTTP Mac Menu');
   if (process.platform === 'darwin' && app.dock) app.dock.hide();
 
+  // Timers do not fire while the Mac is asleep, so everything on screen is
+  // stale the moment it wakes up.
+  powerMonitor.on('resume', () => {
+    log('Woke from sleep — refreshing');
+    setTimeout(refreshAll, WAKE_REFRESH_DELAY_MS);
+  });
+
+  nativeTheme.on('updated', () => {
+    if (configWindow && !configWindow.isDestroyed()) {
+      configWindow.setBackgroundColor(windowBackground());
+    }
+  });
+
   registerIpc();
   createTray();
   renderTray();
 
-  if (!CONFIG_NUMBERS.some(isConfigured)) openConfig(1);
+  if (!requests.length) openConfig(NEW_REQUEST_ID);
 
   await refreshAll();
 };
@@ -862,8 +975,11 @@ const init = async () => {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => openConfig(1));
+  app.on('second-instance', () =>
+    openConfig(requests.length ? requests[0].id : NEW_REQUEST_ID)
+  );
   // This is a tray app: closing the settings window must not quit it.
   app.on('window-all-closed', () => {});
+  app.on('before-quit', () => trayRenderer.destroy());
   app.whenReady().then(init);
 }

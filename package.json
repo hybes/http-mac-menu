@@ -1,11 +1,10 @@
 {
   "name": "cnnct-http-mac-menu",
   "productName": "HTTP Mac Menu",
-  "version": "1.6.0",
+  "version": "1.8.1",
   "description": "Show HTTP responses or crypto holdings in the macOS menu bar.",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "build:css": "tailwindcss -i styles.css -o output.css --minify",
     "start": "npm run build:css && electron .",
     "dev": "npm run build:css && NODE_ENV=development electron .",
@@ -46,8 +45,17 @@
   "build": {
     "appId": "cnnct.crypto-tracker",
     "productName": "HTTP Mac Menu",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "hybes",
+        "repo": "http-mac-menu",
+        "releaseType": "release"
+      }
+    ],
     "files": [
       "index.js",
+      "lib/**/*",
       "scripts/**/*",
       "views/**/*",
       "assets/**/*",

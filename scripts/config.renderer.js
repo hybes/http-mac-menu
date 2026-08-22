@@ -1,5 +1,7 @@
 const params = new URLSearchParams(window.location.search);
-const configNumber = Number(params.get('n')) || 1;
+// 'new' until the request has been saved and given an id of its own.
+let requestId = params.get('id') || 'new';
+let slotName = 'Request';
 
 const form = document.getElementById('configForm');
 const fields = Array.from(form.querySelectorAll('[data-key]'));
@@ -7,13 +9,28 @@ const typeInputs = Array.from(form.querySelectorAll('input[name="type"]'));
 const typedSections = Array.from(form.querySelectorAll('[data-type]'));
 // The crypto layout shows its own "Decimals" box; it mirrors the shared field.
 const mirrors = Array.from(form.querySelectorAll('[data-mirror]'));
-const result = document.getElementById('testResult');
+const statusLine = document.getElementById('status');
 const saveButton = document.getElementById('saveConfig');
 const testButton = document.getElementById('testConfig');
-const clearButton = document.getElementById('clearConfig');
+const removeButton = document.getElementById('removeConfig');
 
-document.title = `Request ${configNumber} – HTTP Mac Menu`;
-document.getElementById('heading').textContent = `Request ${configNumber}`;
+const labelField = fields.find((el) => el.dataset.key === 'label');
+const timerField = fields.find((el) => el.dataset.key === 'timer');
+
+// Matches DEFAULT_REFRESH_SECONDS in lib/constants.js.
+const DEFAULT_TIMER = { http: '5', crypto: '60' };
+
+const heading = document.getElementById('heading');
+
+// Until it is named, a request is known by its place in the menu.
+const applySlot = (position) => {
+  slotName = `Request ${position}`;
+  heading.textContent = slotName;
+  if (labelField) labelField.placeholder = slotName;
+  for (const el of document.querySelectorAll('[data-slot-name]')) {
+    el.textContent = slotName;
+  }
+};
 
 const currentType = () =>
   (typeInputs.find((input) => input.checked) || {}).value || 'http';
@@ -21,8 +38,10 @@ const currentType = () =>
 const setType = (type) => {
   for (const input of typeInputs) input.checked = input.value === type;
   for (const section of typedSections) {
-    section.classList.toggle('hidden', section.dataset.type !== type);
+    section.hidden = section.dataset.type !== type;
   }
+  // The default refresh differs per type, so the greyed-out hint should too.
+  if (timerField) timerField.placeholder = DEFAULT_TIMER[type] || '5';
 };
 
 const fieldByKey = (key) => fields.find((el) => el.dataset.key === key);
@@ -35,103 +54,202 @@ const collect = () => ({
   type: currentType(),
 });
 
-const showResult = (kind, text) => {
-  const tone = {
-    pending: 'bg-white/5 text-stone-300',
-    ok: 'bg-emerald-500/15 text-emerald-300',
-    error: 'bg-red-500/15 text-red-300',
-  }[kind];
-  result.textContent = text;
-  result.className = `rounded-md px-4 py-3 text-sm break-words ${tone}`;
+// ---------------------------------------------------------------------------
+// Native window chrome
+// ---------------------------------------------------------------------------
+
+// The window is sized to its content so it never scrolls. Anything that can
+// change the height — swapping type, opening the placeholder list, a long
+// error — goes through here.
+let fitQueued = false;
+const fit = () => {
+  if (fitQueued) return;
+  fitQueued = true;
+  // A timer rather than requestAnimationFrame: the first fit happens while the
+  // window is still hidden, and frames are throttled until it is shown.
+  setTimeout(async () => {
+    fitQueued = false;
+    try {
+      const { clamped } = await window.api.fitWindow(
+        document.body.scrollHeight
+      );
+      // Only a screen too short for the form brings scrolling back.
+      document.body.style.overflowY = clamped ? 'auto' : 'hidden';
+    } catch {
+      /* the window is closing */
+    }
+  }, 0);
 };
 
-const hideResult = () => {
-  result.className = 'hidden';
-  result.textContent = '';
+// Catch-all for anything that changes the height without going through the
+// handlers below — a wrapped error message, a late font, a longer hint.
+new ResizeObserver(fit).observe(document.body);
+
+// Pick readable text for accent colours across the spectrum (a yellow accent
+// needs black, the default blue needs white).
+const contrastingText = (r, g, b) =>
+  (r * 299 + g * 587 + b * 114) / 1000 > 150 ? '#000' : '#fff';
+
+const applyAccent = async () => {
+  try {
+    const raw = await window.api.accentColor();
+    if (!raw || !/^[0-9a-f]{6,8}$/i.test(raw)) return;
+    const [r, g, b] = [0, 2, 4].map((i) => parseInt(raw.slice(i, i + 2), 16));
+    const root = document.documentElement.style;
+    root.setProperty('--accent', `#${raw.slice(0, 6)}`);
+    root.setProperty('--accent-text', contrastingText(r, g, b));
+  } catch {
+    /* keep the default blue */
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Status line — a test result if there is one, otherwise the unsaved marker
+// ---------------------------------------------------------------------------
+
+let savedSnapshot = JSON.stringify(collect());
+let testMessage = null; // { kind, text }
+
+const isDirty = () => JSON.stringify(collect()) !== savedSnapshot;
+
+const renderStatus = () => {
+  const message =
+    testMessage ||
+    (isDirty() ? { kind: 'dirty', text: 'Unsaved changes' } : null);
+  statusLine.textContent = message ? message.text : '';
+  statusLine.className = message ? `status status-${message.kind}` : 'status';
+  fit();
+};
+
+const setTestMessage = (kind, text) => {
+  testMessage = kind ? { kind, text } : null;
+  renderStatus();
+};
+
+const markSaved = () => {
+  savedSnapshot = JSON.stringify(collect());
+  renderStatus();
+};
+
+const updateTitle = () => {
+  const name = (labelField ? labelField.value.trim() : '') || slotName;
+  document.title = `${name} – HTTP Mac Menu`;
 };
 
 const setBusy = (busy) => {
-  for (const button of [saveButton, testButton, clearButton]) {
+  for (const button of [saveButton, testButton, removeButton]) {
     button.disabled = busy;
   }
 };
 
+// ---------------------------------------------------------------------------
+// Actions
+// ---------------------------------------------------------------------------
+
 const load = async () => {
   try {
-    const config = await window.api.loadConfig(configNumber);
-    for (const el of fields) el.value = config[el.dataset.key] ?? '';
-    for (const el of mirrors) el.value = config[el.dataset.mirror] ?? '';
-    setType(config.type === 'crypto' ? 'crypto' : 'http');
+    const config = await window.api.loadConfig(requestId);
+    requestId = config.id;
+    applySlot(config.position);
+    // A request that has never been saved has nothing to remove.
+    removeButton.hidden = config.isNew;
+    const values = config.values || {};
+    for (const el of fields) el.value = values[el.dataset.key] ?? '';
+    for (const el of mirrors) el.value = values[el.dataset.mirror] ?? '';
+    setType(values.type === 'crypto' ? 'crypto' : 'http');
   } catch (error) {
     console.error('Error loading configuration:', error);
-    showResult('error', `Could not load settings: ${error.message}`);
+    setTestMessage('error', `Could not load settings: ${error.message}`);
+  } finally {
+    updateTitle();
+    markSaved();
   }
 };
 
 const save = async () => {
   setBusy(true);
   try {
-    await window.api.saveConfig(configNumber, collect());
+    const response = await window.api.saveConfig(requestId, collect());
+    if (response && response.ok === false) {
+      setTestMessage('error', response.error);
+      setBusy(false);
+      return;
+    }
+    markSaved();
   } catch (error) {
     console.error('Error saving configuration:', error);
-    showResult('error', `Could not save: ${error.message}`);
+    setTestMessage('error', `Could not save: ${error.message}`);
     setBusy(false);
   }
 };
 
 const test = async () => {
   setBusy(true);
-  showResult('pending', 'Testing…');
+  setTestMessage('dirty', 'Testing…');
   try {
     const response = await window.api.testConfig(collect());
     if (response.ok) {
-      showResult('ok', `Menu bar will show: ${response.value}`);
+      setTestMessage('ok', `Shows: ${response.value}`);
     } else {
-      showResult('error', response.error);
+      setTestMessage('error', response.error);
     }
   } catch (error) {
-    showResult('error', error.message);
+    setTestMessage('error', error.message);
   } finally {
     setBusy(false);
   }
 };
 
-const clear = async () => {
+const remove = async () => {
+  const name = (labelField ? labelField.value.trim() : '') || slotName;
   const confirmed = window.confirm(
-    `Remove Request ${configNumber} from the menu bar? This deletes its settings.`
+    `Remove ${name} from the menu bar? This deletes its settings.`
   );
   if (!confirmed) return;
   setBusy(true);
   try {
-    await window.api.clearConfig(configNumber);
+    await window.api.removeConfig(requestId);
   } catch (error) {
-    console.error('Error clearing configuration:', error);
-    showResult('error', `Could not clear: ${error.message}`);
+    console.error('Error removing request:', error);
+    setTestMessage('error', `Could not remove: ${error.message}`);
     setBusy(false);
   }
 };
+
+const close = () => {
+  if (isDirty() && !window.confirm('Discard unsaved changes?')) return;
+  window.api.close();
+};
+
+// ---------------------------------------------------------------------------
+// Wiring
+// ---------------------------------------------------------------------------
 
 form.addEventListener('submit', (event) => {
   event.preventDefault();
   save();
 });
 testButton.addEventListener('click', test);
-clearButton.addEventListener('click', clear);
+removeButton.addEventListener('click', remove);
 
 for (const input of typeInputs) {
   input.addEventListener('change', () => {
     setType(currentType());
-    hideResult();
+    setTestMessage(null);
   });
 }
 
-for (const el of fields) el.addEventListener('input', hideResult);
+for (const el of fields) {
+  el.addEventListener('input', () => setTestMessage(null));
+}
+
+if (labelField) labelField.addEventListener('input', updateTitle);
 
 for (const mirror of mirrors) {
   const target = fieldByKey(mirror.dataset.mirror);
   mirror.addEventListener('input', () => {
     if (target) target.value = mirror.value;
-    hideResult();
+    setTestMessage(null);
   });
   if (target) {
     target.addEventListener('input', () => {
@@ -140,13 +258,24 @@ for (const mirror of mirrors) {
   }
 }
 
+// Opening the placeholder list changes the height.
+for (const details of document.querySelectorAll('details')) {
+  details.addEventListener('toggle', fit);
+}
+
 window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
-    window.api.close();
+    close();
   } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
     event.preventDefault();
     save();
   }
 });
 
-window.addEventListener('DOMContentLoaded', load);
+window.addEventListener('DOMContentLoaded', async () => {
+  applyAccent();
+  await load();
+  fit();
+});
+// Fonts and late layout can shift the height after DOMContentLoaded.
+window.addEventListener('load', fit);
