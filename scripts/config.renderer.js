@@ -216,10 +216,11 @@ const remove = async () => {
   }
 };
 
-const close = () => {
-  if (isDirty() && !window.confirm('Discard unsaved changes?')) return;
-  window.api.close();
-};
+// The main process asks before discarding — it is the only place that sees
+// every way this window can be dismissed. It reads this function to decide.
+window.configIsDirty = isDirty;
+
+const close = () => window.api.close();
 
 // ---------------------------------------------------------------------------
 // Wiring

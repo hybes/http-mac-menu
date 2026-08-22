@@ -1,7 +1,7 @@
 {
   "name": "cnnct-http-mac-menu",
   "productName": "HTTP Mac Menu",
-  "version": "1.8.1",
+  "version": "1.8.2",
   "description": "Show HTTP responses or crypto holdings in the macOS menu bar.",
   "main": "index.js",
   "scripts": {

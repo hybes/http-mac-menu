@@ -30,8 +30,14 @@ jobs:
       contents: write
 
     steps:
+      # Check out main as it is now, not the commit that triggered this run.
+      # Runs queue on the concurrency group above, so by the time a queued run
+      # starts, an earlier one may already have bumped the version and pushed
+      # its tag — building from the triggering SHA would re-derive a version
+      # that is already tagged and fail. Tags are needed too, hence depth 0.
       - uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
@@ -49,6 +55,15 @@ jobs:
           npm version "${{ inputs.bump || 'patch' }}" -m "release v%s [skip ci]"
           echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
+      # Push before publishing. A GitHub release is cut against a tag, so the
+      # tag and its commit have to be on the remote first — otherwise the
+      # release is created against whatever main pointed at and the tag push
+      # afterwards is rejected. Not forced: if someone else pushed in the
+      # meantime this fails rather than clobbering them, and the next run
+      # picks the changes up.
+      - name: Push the version commit and tag
+        run: git push --follow-tags origin HEAD:main
+
       # Universal builds are not used here: the README offers a download per
       # architecture, and two smaller downloads beat one twice the size.
       - name: Build and publish
@@ -58,9 +73,6 @@ jobs:
           # No Developer ID certificate on CI: build unsigned rather than
           # failing while looking for one.
           CSC_IDENTITY_AUTO_DISCOVERY: false
-
-      - name: Push the version commit and tag
-        run: git push --follow-tags origin HEAD:main
 
       - name: Summary
         run: |

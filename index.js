@@ -14,6 +14,7 @@ const {
   nativeTheme,
   screen,
   systemPreferences,
+  dialog,
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -100,6 +101,10 @@ let configWindow = null;
 let requests = [];
 let indicator = DEFAULT_INDICATOR;
 let paused = false;
+// Set while closing the settings window on purpose (after a save or a remove,
+// or once the user has agreed to discard), so the guard below stands aside.
+let discardConfirmed = false;
+let quitting = false;
 const trayRenderer = new TrayImageRenderer();
 const refreshTimers = {};
 const inFlight = new Set();
@@ -512,16 +517,19 @@ const scheduleRefresh = (id) => {
   );
 };
 
-const startRequest = async (id) => {
+// `force` is for refreshes the user asked for by hand, which should happen even
+// while updates are paused. Everything else must respect the pause — checking
+// it only in scheduleRefresh would still let one fetch through first.
+const startRequest = async (id, { force = false } = {}) => {
   stopRefresh(id);
+  if (paused && !force) return;
   await refreshRequest(id);
   renderTray();
   scheduleRefresh(id);
 };
 
-const refreshAll = async () => {
-  await Promise.all(requestIds().map((id) => startRequest(id)));
-};
+const refreshAll = async ({ force = false } = {}) =>
+  Promise.all(requestIds().map((id) => startRequest(id, { force })));
 
 const setPaused = (value) => {
   paused = value;
@@ -625,7 +633,7 @@ const buildMenu = () =>
       click: () => openConfig(NEW_REQUEST_ID),
     },
     { type: 'separator' },
-    { label: 'Refresh Now', click: refreshAll },
+    { label: 'Refresh Now', click: () => refreshAll({ force: true }) },
     buildCopyItem(),
     {
       label: paused ? 'Resume Updates' : 'Pause Updates',
@@ -763,10 +771,46 @@ const hardenWindow = (contents) => {
   });
 };
 
-const openConfig = (id) => {
+// The renderer knows whether the form has been edited since it was loaded.
+const configIsDirty = async () => {
+  if (!configWindow || configWindow.isDestroyed()) return false;
+  try {
+    return Boolean(
+      await configWindow.webContents.executeJavaScript(
+        'typeof configIsDirty === "function" && configIsDirty()'
+      )
+    );
+  } catch {
+    // If the page cannot answer, do not stand in the way of closing it.
+    return false;
+  }
+};
+
+// Used by every path that would throw away edits: closing the window, and
+// loading a different request into the window that is already open.
+const confirmDiscard = async () => {
+  if (!(await configIsDirty())) return true;
+  const { response } = await dialog.showMessageBox(configWindow, {
+    type: 'warning',
+    message: 'Discard unsaved changes?',
+    detail: 'This request has edits that have not been saved.',
+    buttons: ['Discard Changes', 'Keep Editing'],
+    defaultId: 1,
+    cancelId: 1,
+  });
+  return response === 0;
+};
+
+const openConfig = async (id) => {
   const query = { id: String(id) };
 
   if (configWindow && !configWindow.isDestroyed()) {
+    // Loading another request over the top would drop the current edits.
+    if (!(await confirmDiscard())) {
+      configWindow.show();
+      configWindow.focus();
+      return;
+    }
     configWindow.loadFile(CONFIG_VIEW, { query });
     configWindow.show();
     configWindow.focus();
@@ -800,8 +844,22 @@ const openConfig = (id) => {
     if (configWindow) configWindow.show();
   });
 
+  // Catches every way the window can be dismissed — the red button, Cmd-W and
+  // Escape all end up here, so the check lives in one place.
+  configWindow.on('close', (event) => {
+    if (discardConfirmed || quitting) return;
+    event.preventDefault();
+    const closing = configWindow;
+    confirmDiscard().then((confirmed) => {
+      if (!confirmed || !closing || closing.isDestroyed()) return;
+      discardConfirmed = true;
+      closing.close();
+    });
+  });
+
   configWindow.on('closed', () => {
     configWindow = null;
+    discardConfirmed = false;
   });
 
   hardenWindow(configWindow.webContents);
@@ -821,8 +879,12 @@ const openConfig = (id) => {
   configWindow.loadFile(CONFIG_VIEW, { query });
 };
 
-const closeConfigWindow = () => {
-  if (configWindow && !configWindow.isDestroyed()) configWindow.close();
+// `force` is for closes that follow an explicit save or remove, where there is
+// nothing left to lose and asking would be nonsense.
+const closeConfigWindow = ({ force = false } = {}) => {
+  if (!configWindow || configWindow.isDestroyed()) return;
+  if (force) discardConfirmed = true;
+  configWindow.close();
 };
 
 // ---------------------------------------------------------------------------
@@ -872,7 +934,7 @@ const registerIpc = () => {
 
     await saveSettings();
     log(`Saved ${nameFor(savedId)}`);
-    closeConfigWindow();
+    closeConfigWindow({ force: true });
     renderTray();
     await startRequest(savedId);
     return { ok: true };
@@ -888,7 +950,7 @@ const registerIpc = () => {
     delete status[id];
     await saveSettings();
     log(`Removed ${name}`);
-    closeConfigWindow();
+    closeConfigWindow({ force: true });
     renderTray();
     return { ok: true };
   });
@@ -953,8 +1015,12 @@ const init = async () => {
   // Timers do not fire while the Mac is asleep, so everything on screen is
   // stale the moment it wakes up.
   powerMonitor.on('resume', () => {
+    if (paused) return;
     log('Woke from sleep — refreshing');
-    setTimeout(refreshAll, WAKE_REFRESH_DELAY_MS);
+    // Checked again on the way out: the pause could have come in since.
+    setTimeout(() => {
+      if (!paused) refreshAll();
+    }, WAKE_REFRESH_DELAY_MS);
   });
 
   nativeTheme.on('updated', () => {
@@ -980,6 +1046,9 @@ if (!app.requestSingleInstanceLock()) {
   );
   // This is a tray app: closing the settings window must not quit it.
   app.on('window-all-closed', () => {});
-  app.on('before-quit', () => trayRenderer.destroy());
+  app.on('before-quit', () => {
+    quitting = true;
+    trayRenderer.destroy();
+  });
   app.whenReady().then(init);
 }
