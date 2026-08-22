@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self'; font-src 'self'; script-src 'self'"
+    />
+    <title>HTTP Mac Menu</title>
+    <link rel="stylesheet" href="../output.css" />
+  </head>
+  <body class="min-h-screen">
+    <main class="mx-auto max-w-xl px-6 py-6">
+      <header class="mb-5 flex items-baseline justify-between gap-4">
+        <h1 id="heading" class="text-xl font-semibold">Request 1</h1>
+        <p class="text-sm text-stone-400">Shown in the menu bar</p>
+      </header>
+
+      <form id="configForm" class="flex flex-col gap-4" novalidate>
+        <div class="field">
+          <label for="type">Type</label>
+          <div class="segmented" role="radiogroup" aria-label="Type">
+            <label class="segment">
+              <input type="radio" name="type" value="http" checked />
+              <span>HTTP request</span>
+            </label>
+            <label class="segment">
+              <input type="radio" name="type" value="crypto" />
+              <span>Crypto</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- HTTP fields -->
+        <div class="field" data-type="http">
+          <label for="url">URL</label>
+          <textarea
+            id="url"
+            data-key="url"
+            rows="2"
+            spellcheck="false"
+            placeholder="https://api.example.com/v1/price"
+          ></textarea>
+          <p class="hint">
+            A GET request. The response body, or a value picked from it with the
+            JSON path below, is shown in the menu bar.
+          </p>
+        </div>
+
+        <div class="field" data-type="http">
+          <label for="headers">Headers</label>
+          <textarea
+            id="headers"
+            data-key="headers"
+            rows="2"
+            spellcheck="false"
+            placeholder="X-API-Key: abc123"
+          ></textarea>
+          <p class="hint">
+            Optional. One per line or comma separated, as
+            <code>Name: value</code>.
+          </p>
+        </div>
+
+        <div class="field" data-type="http">
+          <label for="json">JSON path</label>
+          <input
+            type="text"
+            id="json"
+            data-key="json"
+            spellcheck="false"
+            placeholder="data.price"
+          />
+          <p class="hint">
+            Optional. Dot path into a JSON response, e.g.
+            <code>data.price</code> or <code>items[0].value</code>. Leave blank
+            for plain-text responses.
+          </p>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4" data-type="http">
+          <div class="field">
+            <label for="multiplier">Multiplier</label>
+            <input
+              type="text"
+              inputmode="decimal"
+              id="multiplier"
+              data-key="multiplier"
+              placeholder="1"
+            />
+            <p class="hint">
+              Optional. Also formats the number with thousands separators (use
+              <code>1</code> for formatting only).
+            </p>
+          </div>
+          <div class="field">
+            <label for="length">Decimals</label>
+            <input
+              type="text"
+              inputmode="numeric"
+              id="length"
+              data-key="length"
+              placeholder="2"
+            />
+            <p class="hint">
+              Optional. Decimal places for numbers; maximum length for text.
+            </p>
+          </div>
+        </div>
+
+        <!-- Crypto fields -->
+        <div class="grid grid-cols-2 gap-4" data-type="crypto">
+          <div class="field">
+            <label for="coin">Coin</label>
+            <input
+              type="text"
+              id="coin"
+              data-key="coin"
+              spellcheck="false"
+              placeholder="SOL"
+            />
+            <p class="hint">
+              Ticker or CoinGecko id, e.g. <code>SOL</code>, <code>BTC</code>,
+              <code>solana</code>.
+            </p>
+          </div>
+          <div class="field">
+            <label for="holdings">Holdings</label>
+            <input
+              type="text"
+              inputmode="decimal"
+              id="holdings"
+              data-key="holdings"
+              placeholder="100"
+            />
+            <p class="hint">
+              Optional. How many you own, for <code>{balance}</code> and
+              <code>{gain…}</code>.
+            </p>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4" data-type="crypto">
+          <div class="field">
+            <label for="currency">Currency</label>
+            <input
+              type="text"
+              id="currency"
+              data-key="currency"
+              spellcheck="false"
+              placeholder="gbp"
+            />
+            <p class="hint">
+              e.g. <code>gbp</code>, <code>usd</code>, <code>eur</code>,
+              <code>btc</code>.
+            </p>
+          </div>
+          <div class="field">
+            <label for="cryptoDecimals">Decimals</label>
+            <input
+              type="text"
+              inputmode="numeric"
+              id="cryptoDecimals"
+              data-mirror="length"
+              placeholder="2"
+            />
+            <p class="hint">
+              Optional. Decimal places for prices and balances.
+            </p>
+          </div>
+        </div>
+
+        <div class="field" data-type="crypto">
+          <label for="template">Show</label>
+          <input
+            type="text"
+            id="template"
+            data-key="template"
+            spellcheck="false"
+            placeholder="{symbol} {balance} {change24h}"
+          />
+          <p class="hint">
+            Optional template. Placeholders: <code>{symbol}</code>
+            <code>{name}</code> <code>{price}</code> <code>{holdings}</code>
+            <code>{balance}</code>, percentage change <code>{change1m}</code>
+            <code>{change5m}</code> <code>{change15m}</code>
+            <code>{change30m}</code> <code>{change1h}</code>
+            <code>{change24h}</code> <code>{change7d}</code>
+            <code>{change30d}</code>, and the same periods as money with
+            <code>{gain24h}</code> etc. Minute changes are measured by this app,
+            so they appear once it has been running that long.
+          </p>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <div class="field">
+            <label for="prefix">Prefix</label>
+            <input type="text" id="prefix" data-key="prefix" placeholder="£" />
+          </div>
+          <div class="field">
+            <label for="suffix">Suffix</label>
+            <input
+              type="text"
+              id="suffix"
+              data-key="suffix"
+              placeholder=" GBP"
+            />
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="timer">Refresh every (seconds)</label>
+          <input
+            type="text"
+            inputmode="numeric"
+            id="timer"
+            data-key="timer"
+            placeholder="5"
+          />
+          <p class="hint" data-type="http">Minimum 5 seconds.</p>
+          <p class="hint" data-type="crypto">
+            Minimum 30 seconds; defaults to 60. CoinGecko's free API only allows
+            a handful of requests per minute.
+          </p>
+        </div>
+
+        <div id="testResult" class="hidden"></div>
+
+        <div class="flex items-center justify-between gap-2 pt-2">
+          <button
+            type="button"
+            id="clearConfig"
+            class="btn bg-red-500/90 text-white hover:bg-red-500"
+          >
+            Clear
+          </button>
+          <div class="flex gap-2">
+            <button
+              type="button"
+              id="testConfig"
+              class="btn bg-white/10 text-white hover:bg-white/20"
+            >
+              Test
+            </button>
+            <button
+              type="submit"
+              id="saveConfig"
+              class="btn bg-blue-500 text-white hover:bg-blue-600"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+        <p class="text-center text-xs text-stone-500">
+          Esc closes this window · ⌘↩ saves
+        </p>
+      </form>
+    </main>
+    <script src="../scripts/config.renderer.js"></script>
+  </body>
+</html>

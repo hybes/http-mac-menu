@@ -1,7 +1,76 @@
-@import 'tailwindcss/base';
-@import 'tailwindcss/components';
-@import 'tailwindcss/utilities';
+@import 'tailwindcss';
 
-html {
+@source './views';
+@source './scripts';
+
+@font-face {
   font-family: 'Hubot Sans';
+  src:
+    url('assets/Hubot-Sans.woff2') format('woff2 supports variations'),
+    url('assets/Hubot-Sans.woff2') format('woff2-variations');
+  font-weight: 200 900;
+  font-stretch: 75% 125%;
+  font-display: swap;
+}
+
+:root {
+  font-family: 'Hubot Sans', system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 24px;
+
+  color-scheme: dark;
+  color: rgba(255, 255, 255, 0.87);
+  background-color: #101010;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+}
+
+@layer components {
+  .field {
+    @apply flex flex-col gap-1.5;
+  }
+  .field label {
+    @apply text-sm font-medium text-stone-200;
+  }
+  .field input,
+  .field textarea {
+    @apply w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-base text-white placeholder:text-stone-500 focus:border-blue-400 focus:outline-hidden;
+  }
+  .field textarea {
+    @apply resize-y;
+  }
+  .hint {
+    @apply text-xs leading-5 text-stone-400;
+  }
+  .hint code {
+    @apply rounded-sm bg-white/10 px-1 py-0.5 text-[11px] text-stone-300;
+  }
+  .btn {
+    @apply cursor-pointer rounded-md px-5 py-2 text-sm font-medium transition-colors disabled:cursor-default disabled:opacity-50;
+  }
+  .segmented {
+    @apply inline-flex gap-1 rounded-md bg-white/5 p-1;
+  }
+  .segment {
+    @apply relative cursor-pointer select-none;
+  }
+  .segment input {
+    @apply sr-only;
+  }
+  .segment span {
+    @apply block rounded-sm px-4 py-1.5 text-sm text-stone-300 transition-colors;
+  }
+  .segment:hover span {
+    @apply text-white;
+  }
+  .segment input:checked + span {
+    @apply bg-blue-500 text-white;
+  }
+  .segment input:focus-visible + span {
+    @apply ring-2 ring-blue-400;
+  }
 }

@@ -1,9 +1,11 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
-  saveConfig: (config) => ipcRenderer.invoke('config:save', config),
-  loadConfig: () => ipcRenderer.invoke('config:load'),
+  loadConfig: (configNumber) => ipcRenderer.invoke('config:load', configNumber),
+  saveConfig: (configNumber, values) =>
+    ipcRenderer.invoke('config:save', configNumber, values),
   clearConfig: (configNumber) =>
     ipcRenderer.invoke('config:clear', configNumber),
-  exit: () => ipcRenderer.invoke('config:exit'),
+  testConfig: (values) => ipcRenderer.invoke('config:test', values),
+  close: () => ipcRenderer.invoke('config:close'),
 });

@@ -1,72 +1,152 @@
-let saveConfig = document.getElementById('saveConfig');
-let cancel = document.getElementById('cancel');
-let clearConfig1 = document.getElementById('clearConfig1');
-let clearConfig2 = document.getElementById('clearConfig2');
-let clearConfig3 = document.getElementById('clearConfig3');
-let saveConfig1 = document.getElementById('saveConfig1');
-let saveConfig2 = document.getElementById('saveConfig2');
-let saveConfig3 = document.getElementById('saveConfig3');
+const params = new URLSearchParams(window.location.search);
+const configNumber = Number(params.get('n')) || 1;
 
-const clear = (formId) => {
-  try {
-    let form = document.getElementById(`form${formId}`);
-    let inputs = form.querySelectorAll('input[type=text], textarea');
+const form = document.getElementById('configForm');
+const fields = Array.from(form.querySelectorAll('[data-key]'));
+const typeInputs = Array.from(form.querySelectorAll('input[name="type"]'));
+const typedSections = Array.from(form.querySelectorAll('[data-type]'));
+// The crypto layout shows its own "Decimals" box; it mirrors the shared field.
+const mirrors = Array.from(form.querySelectorAll('[data-mirror]'));
+const result = document.getElementById('testResult');
+const saveButton = document.getElementById('saveConfig');
+const testButton = document.getElementById('testConfig');
+const clearButton = document.getElementById('clearConfig');
 
-    for (const input of inputs) {
-      input.value = '';
-    }
-  } catch (error) {
-    console.error('Error clearing configuration:', error);
+document.title = `Request ${configNumber} – HTTP Mac Menu`;
+document.getElementById('heading').textContent = `Request ${configNumber}`;
+
+const currentType = () =>
+  (typeInputs.find((input) => input.checked) || {}).value || 'http';
+
+const setType = (type) => {
+  for (const input of typeInputs) input.checked = input.value === type;
+  for (const section of typedSections) {
+    section.classList.toggle('hidden', section.dataset.type !== type);
   }
 };
 
-let config = null;
+const fieldByKey = (key) => fields.find((el) => el.dataset.key === key);
 
-const save = async (formId) => {
+// Hide the sections for the other type straight away, before settings load.
+setType(currentType());
+
+const collect = () => ({
+  ...Object.fromEntries(fields.map((el) => [el.dataset.key, el.value])),
+  type: currentType(),
+});
+
+const showResult = (kind, text) => {
+  const tone = {
+    pending: 'bg-white/5 text-stone-300',
+    ok: 'bg-emerald-500/15 text-emerald-300',
+    error: 'bg-red-500/15 text-red-300',
+  }[kind];
+  result.textContent = text;
+  result.className = `rounded-md px-4 py-3 text-sm break-words ${tone}`;
+};
+
+const hideResult = () => {
+  result.className = 'hidden';
+  result.textContent = '';
+};
+
+const setBusy = (busy) => {
+  for (const button of [saveButton, testButton, clearButton]) {
+    button.disabled = busy;
+  }
+};
+
+const load = async () => {
   try {
-    if (!config) config = {};
-    let form = document.getElementById(`form${formId}`);
-    let inputs = form.querySelectorAll('input, textarea');
+    const config = await window.api.loadConfig(configNumber);
+    for (const el of fields) el.value = config[el.dataset.key] ?? '';
+    for (const el of mirrors) el.value = config[el.dataset.mirror] ?? '';
+    setType(config.type === 'crypto' ? 'crypto' : 'http');
+  } catch (error) {
+    console.error('Error loading configuration:', error);
+    showResult('error', `Could not load settings: ${error.message}`);
+  }
+};
 
-    for (const input of inputs) {
-      config[input.id] = input.value;
-    }
+const save = async () => {
+  setBusy(true);
+  try {
+    await window.api.saveConfig(configNumber, collect());
   } catch (error) {
     console.error('Error saving configuration:', error);
+    showResult('error', `Could not save: ${error.message}`);
+    setBusy(false);
   }
 };
 
-const exit = async () => {
-  await api.exit();
-};
-
-const loadConfig = async () => {
-  config = await api.loadConfig();
-
-  for (const setting in config) {
-    let el = document.getElementById(setting);
-
-    if (el) el.value = config[setting];
+const test = async () => {
+  setBusy(true);
+  showResult('pending', 'Testing…');
+  try {
+    const response = await window.api.testConfig(collect());
+    if (response.ok) {
+      showResult('ok', `Menu bar will show: ${response.value}`);
+    } else {
+      showResult('error', response.error);
+    }
+  } catch (error) {
+    showResult('error', error.message);
+  } finally {
+    setBusy(false);
   }
 };
 
-clearConfig1?.addEventListener('click', () => clear('1'));
-clearConfig2?.addEventListener('click', () => clear('2'));
-clearConfig3?.addEventListener('click', () => clear('3'));
+const clear = async () => {
+  const confirmed = window.confirm(
+    `Remove Request ${configNumber} from the menu bar? This deletes its settings.`
+  );
+  if (!confirmed) return;
+  setBusy(true);
+  try {
+    await window.api.clearConfig(configNumber);
+  } catch (error) {
+    console.error('Error clearing configuration:', error);
+    showResult('error', `Could not clear: ${error.message}`);
+    setBusy(false);
+  }
+};
 
-window.addEventListener('DOMContentLoaded', loadConfig);
+form.addEventListener('submit', (event) => {
+  event.preventDefault();
+  save();
+});
+testButton.addEventListener('click', test);
+clearButton.addEventListener('click', clear);
 
-saveConfig1?.addEventListener('click', async () => {
-  await save('1');
-  await api.saveConfig(config);
+for (const input of typeInputs) {
+  input.addEventListener('change', () => {
+    setType(currentType());
+    hideResult();
+  });
+}
+
+for (const el of fields) el.addEventListener('input', hideResult);
+
+for (const mirror of mirrors) {
+  const target = fieldByKey(mirror.dataset.mirror);
+  mirror.addEventListener('input', () => {
+    if (target) target.value = mirror.value;
+    hideResult();
+  });
+  if (target) {
+    target.addEventListener('input', () => {
+      mirror.value = target.value;
+    });
+  }
+}
+
+window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    window.api.close();
+  } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+    event.preventDefault();
+    save();
+  }
 });
 
-saveConfig2?.addEventListener('click', async () => {
-  await save('2');
-  await api.saveConfig(config);
-});
-
-saveConfig3?.addEventListener('click', async () => {
-  await save('3');
-  await api.saveConfig(config);
-});
+window.addEventListener('DOMContentLoaded', load);

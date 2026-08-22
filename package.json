@@ -2,43 +2,61 @@
   "name": "cnnct-http-mac-menu",
   "productName": "HTTP Mac Menu",
   "version": "1.6.0",
-  "description": "An app to allow users to keep track of crypto in the tray.",
+  "description": "Show HTTP responses or crypto holdings in the macOS menu bar.",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "tailwindcss build -i styles.css -o output.css && electron .",
-    "pack": "tailwindcss build -i styles.css -o output.css && electron-builder --dir",
-    "dist": "tailwindcss build -i styles.css -o output.css && electron-builder",
+    "build:css": "tailwindcss -i styles.css -o output.css --minify",
+    "start": "npm run build:css && electron .",
+    "dev": "npm run build:css && NODE_ENV=development electron .",
+    "pack": "npm run build:css && electron-builder --dir",
+    "dist": "npm run build:css && electron-builder",
+    "install:local": "bash tools/install-local.sh",
+    "format": "prettier --write .",
     "postinstall": "electron-builder install-app-deps",
     "publish": "node publish.js"
   },
-  "keywords": [],
+  "keywords": [
+    "electron",
+    "menubar",
+    "tray",
+    "http",
+    "crypto",
+    "macos"
+  ],
   "author": "Connect Dorset",
   "license": "ISC",
   "devDependencies": {
-    "electron": "^29.3.0",
-    "electron-builder": "^24.13.3"
+    "@tailwindcss/cli": "^4.3.3",
+    "electron": "^43.4.1",
+    "electron-builder": "^26.15.3",
+    "prettier": "^3.9.6",
+    "prettier-plugin-tailwindcss": "^0.8.1",
+    "tailwindcss": "^4.3.3"
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/hybes/http-mac-menu.git"
   },
   "dependencies": {
-    "@sentry/electron": "^4.22.0",
-    "autoprefixer": "^10.4.19",
-    "axios": "^1.6.8",
-    "electron-settings": "^4.0.2",
-    "postcss": "^8.4.38",
-    "prettier": "^3.2.5",
-    "prettier-plugin-tailwindcss": "^0.5.13",
-    "tailwindcss": "^3.4.3"
+    "@sentry/electron": "^7.17.0",
+    "axios": "^1.19.0",
+    "electron-settings": "^4.0.4"
   },
   "build": {
     "appId": "cnnct.crypto-tracker",
     "productName": "HTTP Mac Menu",
+    "files": [
+      "index.js",
+      "scripts/**/*",
+      "views/**/*",
+      "assets/**/*",
+      "output.css",
+      "package.json"
+    ],
     "mac": {
       "icon": "./build/macIcon.icns",
-      "category": "cnnct.http-mac-menu",
+      "category": "public.app-category.utilities",
       "target": [
         {
           "target": "default",
