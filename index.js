@@ -107,7 +107,13 @@ let discardConfirmed = false;
 let quitting = false;
 const trayRenderer = new TrayImageRenderer();
 const refreshTimers = {};
-const inFlight = new Set();
+// id -> the generation whose fetch is currently running.
+const inFlight = new Map();
+// Bumped whenever a request is edited or removed. A reply that started under an
+// older generation is thrown away instead of being written to the menu bar —
+// otherwise a slow response for the previous URL lands as the new one's value,
+// and an id reused by a later request inherits it.
+const generations = new Map();
 // request id -> { value, error, offline, updatedAt, failures }
 const status = {};
 
@@ -150,6 +156,14 @@ const isCrypto = (request) => request.type === 'crypto';
 const isReady = (id) => {
   const request = findRequest(id);
   return Boolean(request && isConfigured(request));
+};
+
+const generationOf = (id) => generations.get(id) || 0;
+
+// Forget what a request was showing and disown any fetch still running for it.
+const invalidate = (id) => {
+  generations.set(id, generationOf(id) + 1);
+  delete status[id];
 };
 
 const saveSettings = () =>
@@ -434,7 +448,13 @@ const refreshRequest = async (id) => {
     delete status[id];
     return;
   }
-  if (inFlight.has(id)) return;
+
+  const request = findRequest(id);
+  const generation = generationOf(id);
+  // Only skip when this exact configuration is already being fetched. Saving
+  // bumps the generation, so the new settings are fetched straight away rather
+  // than waiting out the previous poll.
+  if (inFlight.get(id) === generation) return;
 
   const previous = status[id] || {};
 
@@ -445,9 +465,12 @@ const refreshRequest = async (id) => {
     return;
   }
 
-  inFlight.add(id);
+  inFlight.set(id, generation);
   try {
-    const { text, data } = await fetchValue(findRequest(id));
+    const { text, data } = await fetchValue(request);
+    // Edited or removed while this was in the air: the answer is about a
+    // configuration that no longer exists.
+    if (generation !== generationOf(id)) return;
     status[id] = {
       value: text,
       error: null,
@@ -459,6 +482,7 @@ const refreshRequest = async (id) => {
       `Success (${nameFor(id)}): showing "${toText(text)}" from ${truncate(JSON.stringify(data), 500)}`
     );
   } catch (err) {
+    if (generation !== generationOf(id)) return;
     const message = describeError(err);
     status[id] = {
       value: previous.value ?? null,
@@ -472,7 +496,8 @@ const refreshRequest = async (id) => {
     // in the local log; only report genuinely unexpected errors.
     if (!axios.isAxiosError(err)) Sentry.captureException(err);
   } finally {
-    inFlight.delete(id);
+    // Leave it alone if a newer generation has taken over the slot.
+    if (inFlight.get(id) === generation) inFlight.delete(id);
   }
 };
 
@@ -664,7 +689,7 @@ const buildMenu = () =>
     { label: 'Quit', role: 'quit' },
   ]);
 
-let lastRendered = { title: null, tooltip: null, menu: null };
+let lastRendered = { contents: null, tooltip: null, menu: null };
 // Drawing the menu bar image is asynchronous, so a slow render must not be
 // allowed to land on top of a newer value.
 let renderToken = 0;
@@ -703,8 +728,13 @@ const renderTray = () => {
   const ready = requestIds().filter(isReady);
 
   const items = ready.length ? ready.map(trayTitleFor) : [PLACEHOLDER_TITLE];
+  // The image draws every item in full, so what has to be compared is the
+  // items themselves. The title below is truncated and can stay byte-identical
+  // while a later request's value changes, which used to leave the menu bar
+  // showing a stale image even as the menu and tooltip updated.
+  const contents = items.join('\u0000');
   const title = ready.length
-    ? truncate(ready.map(trayTitleFor).join(TITLE_SEPARATOR), MAX_TITLE_CHARS)
+    ? truncate(items.join(TITLE_SEPARATOR), MAX_TITLE_CHARS)
     : PLACEHOLDER_TITLE;
   const tooltip = ready.length
     ? [...ready.map(tooltipFor), ...(paused ? ['Updates paused'] : [])].join(
@@ -720,18 +750,18 @@ const renderTray = () => {
     `login:${app.getLoginItemSettings().openAtLogin}`,
   ].join('\n');
 
-  if (title !== lastRendered.title) showTrayContents(items, title);
+  if (contents !== lastRendered.contents) showTrayContents(items, title);
   if (tooltip !== lastRendered.tooltip) tray.setToolTip(tooltip);
   // Replacing the menu closes it if it is open, so only do it when it changed.
   if (menu !== lastRendered.menu) tray.setContextMenu(buildMenu());
-  lastRendered = { title, tooltip, menu };
+  lastRendered = { contents, tooltip, menu };
 };
 
 const setIndicator = async (style) => {
   indicator = normalizeIndicator(style);
   await saveSettings();
   log(`Indicator style set to ${indicator}`);
-  lastRendered = { title: null, tooltip: null, menu: null };
+  lastRendered = { contents: null, tooltip: null, menu: null };
   renderTray();
 };
 
@@ -740,7 +770,7 @@ const createTray = () => {
   tray.setTitle('Loading…');
   tray.setToolTip('Loading…');
   tray.setContextMenu(buildMenu());
-  lastRendered = { title: null, tooltip: null, menu: null };
+  lastRendered = { contents: null, tooltip: null, menu: null };
 };
 
 // ---------------------------------------------------------------------------
@@ -929,8 +959,11 @@ const registerIpc = () => {
     } else {
       requests[index] = { id, ...clean };
       savedId = id;
-      delete status[id];
     }
+
+    // Also covers a new request that reused the id of a removed one, whose
+    // last value would otherwise still be sitting in `status`.
+    invalidate(savedId);
 
     await saveSettings();
     log(`Saved ${nameFor(savedId)}`);
@@ -947,7 +980,7 @@ const registerIpc = () => {
     const name = nameFor(id);
     requests.splice(index, 1);
     stopRefresh(id);
-    delete status[id];
+    invalidate(id);
     await saveSettings();
     log(`Removed ${name}`);
     closeConfigWindow({ force: true });
