@@ -924,13 +924,17 @@ fn open_about(app: &AppHandle) {
 
 #[cfg(desktop)]
 fn hide_about_window(app: &AppHandle, window: &tauri::WebviewWindow<tauri::Wry>) {
-    if let Err(error) = window.hide() {
-        scheduler::log_line(app, &format!("Could not hide the About window: {error}"));
-        return;
+    match window.hide() {
+        Ok(()) => {
+            // The Dock policy counts visible windows, so it moves when this
+            // one goes.
+            #[cfg(target_os = "macos")]
+            apply_activation_policy(app);
+        }
+        Err(error) => {
+            scheduler::log_line(app, &format!("Could not hide the About window: {error}"));
+        }
     }
-    // The Dock policy counts visible windows, so it moves when this one goes.
-    #[cfg(target_os = "macos")]
-    apply_activation_policy(app);
 }
 
 /// Escape on the About page arrives here through a command.
