@@ -204,8 +204,15 @@ pub(crate) async fn set_indicator_preference(app: &AppHandle, style: String) -> 
     };
     let indicator = state.indicator.lock().unwrap().clone();
     let show_in_dock = state.show_in_dock.load(std::sync::atomic::Ordering::SeqCst);
+    let tray_link = state.tray_link.lock().unwrap().clone();
     let requests = state.requests.lock().unwrap().clone();
-    if let Err(error) = crate::settings::save(app, &indicator, show_in_dock, &requests) {
+    if let Err(error) = crate::settings::save(
+        app,
+        &indicator,
+        show_in_dock,
+        tray_link.as_deref(),
+        &requests,
+    ) {
         *state.indicator.lock().unwrap() = previous;
         return Err(error);
     }
@@ -227,14 +234,72 @@ pub(crate) async fn toggle_dock_preference(app: &AppHandle) -> Result<bool, Stri
         .show_in_dock
         .store(next, std::sync::atomic::Ordering::SeqCst);
     let indicator = state.indicator.lock().unwrap().clone();
+    let tray_link = state.tray_link.lock().unwrap().clone();
     let requests = state.requests.lock().unwrap().clone();
-    if let Err(error) = crate::settings::save(app, &indicator, next, &requests) {
+    if let Err(error) =
+        crate::settings::save(app, &indicator, next, tray_link.as_deref(), &requests)
+    {
         state
             .show_in_dock
             .store(previous, std::sync::atomic::Ordering::SeqCst);
         return Err(error);
     }
     Ok(next)
+}
+
+/// The tray-link preference: what a plain left click on the tray opens. An
+/// empty string clears it and left click goes back to opening the menu.
+#[tauri::command]
+pub async fn set_tray_link(app: AppHandle, link: String) -> Result<Option<String>, String> {
+    let normalized = {
+        let trimmed = link.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(
+                crate::settings::normalize_tray_link(trimmed)
+                    .ok_or_else(|| "The link must start with http:// or https://".to_string())?,
+            )
+        }
+    };
+    let state = app.state::<AppState>();
+    let _commit = state.commit_lock.lock().await;
+    if state.persistence_is_degraded() {
+        return Err(
+            "Settings recovery is pending; restart the app before changing preferences.".into(),
+        );
+    }
+    let previous = {
+        let mut tray_link = state.tray_link.lock().unwrap();
+        std::mem::replace(&mut *tray_link, normalized.clone())
+    };
+    let indicator = state.indicator.lock().unwrap().clone();
+    let show_in_dock = state.show_in_dock.load(std::sync::atomic::Ordering::SeqCst);
+    let requests = state.requests.lock().unwrap().clone();
+    if let Err(error) = crate::settings::save(
+        &app,
+        &indicator,
+        show_in_dock,
+        normalized.as_deref(),
+        &requests,
+    ) {
+        *state.tray_link.lock().unwrap() = previous;
+        return Err(error);
+    }
+    scheduler::log_line(
+        &app,
+        &match &normalized {
+            Some(link) => format!("Left click now opens {link}"),
+            None => "Left click now opens the menu".to_string(),
+        },
+    );
+    crate::render_tray(&app);
+    Ok(normalized)
+}
+
+#[tauri::command]
+pub fn get_tray_link(app: AppHandle) -> Option<String> {
+    app.state::<AppState>().tray_link.lock().unwrap().clone()
 }
 
 fn reconcile_rule_state_snapshot(
@@ -288,10 +353,12 @@ async fn persist_staged_documents(
 
     let indicator = state.indicator.lock().unwrap().clone();
     let show_in_dock = state.show_in_dock.load(std::sync::atomic::Ordering::SeqCst);
+    let tray_link = state.tray_link.lock().unwrap().clone();
     let transaction = crate::settings::begin_state_transaction(
         app,
         &indicator,
         show_in_dock,
+        tray_link.as_deref(),
         current_requests,
         current_history,
         current_rules,
@@ -303,7 +370,13 @@ async fn persist_staged_documents(
         if rules_changed {
             crate::settings::save_rule_states(app, next_rules)?;
         }
-        crate::settings::save(app, &indicator, show_in_dock, requests)
+        crate::settings::save(
+            app,
+            &indicator,
+            show_in_dock,
+            tray_link.as_deref(),
+            requests,
+        )
     })();
     if let Err(error) = write_result {
         return match crate::settings::rollback_state_transaction(&transaction) {

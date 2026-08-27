@@ -52,6 +52,9 @@ pub struct AppState {
     pub indicator: Mutex<String>,
     /// Dock and app-switcher presence; see settings::Loaded.
     pub show_in_dock: AtomicBool,
+    /// Left click on the tray opens this instead of the menu; see
+    /// settings::Loaded.
+    pub tray_link: Mutex<Option<String>>,
     // The crypto source owns these across its await. Async mutexes serialize
     // crypto refreshes without blocking unrelated HTTP requests or losing
     // cache/history updates when several requests are due together.
@@ -98,6 +101,7 @@ impl AppState {
             paused: AtomicBool::new(false),
             indicator: Mutex::new("chevron".into()),
             show_in_dock: AtomicBool::new(false),
+            tray_link: Mutex::new(None),
             price_history: tokio::sync::Mutex::new(PriceHistory::default()),
             coin_cache: tokio::sync::Mutex::new(HashMap::new()),
             series_history: Mutex::new(SeriesHistory::default()),

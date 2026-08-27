@@ -23,6 +23,11 @@ On desktop, closing the settings window, pressing Escape or using Command-W
 hides the window and leaves HTTP Widgets running in the tray/menu bar. Quit from
 the tray menu when you want to stop the engine.
 
+Settings has a Menu bar option to make a plain left click on the tray open a
+link of your choosing (a dashboard, an exchange, anything http(s)); the menu
+then moves to right click. Linux tray items only support menus, so the menu
+stays on both buttons there.
+
 ## Requests
 
 Each widget is a small request whose result is shown as text:

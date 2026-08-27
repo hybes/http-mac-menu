@@ -471,14 +471,19 @@ pub fn display_name(request: &Request, index: usize) -> String {
 pub fn settings_document(
     indicator: &str,
     show_in_dock: bool,
+    tray_link: Option<&str>,
     requests: &[Request],
 ) -> serde_json::Value {
-    serde_json::json!({
+    let mut doc = serde_json::json!({
         "schemaVersion": SETTINGS_SCHEMA_VERSION,
         "indicator": indicator,
         "showInDock": show_in_dock,
         "requests": requests,
-    })
+    });
+    if let Some(link) = tray_link {
+        doc["trayLink"] = serde_json::Value::String(link.to_string());
+    }
+    doc
 }
 
 #[cfg(test)]

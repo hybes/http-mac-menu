@@ -139,6 +139,9 @@ pub struct Loaded {
     /// Whether the app also shows up in the Dock and the app switcher, rather
     /// than living only in the menu bar. Off is the menu-bar-extra default.
     pub show_in_dock: bool,
+    /// A link that a plain left click on the tray opens instead of the menu;
+    /// the menu stays reachable by right click. None keeps the menu on both.
+    pub tray_link: Option<String>,
     pub imported: bool,
     /// A damaged current document is preserved for recovery rather than being
     /// mistaken for a clean first launch or silently replaced by legacy data.
@@ -173,6 +176,7 @@ pub fn load(app: &tauri::AppHandle) -> Result<Loaded, String> {
             requests: vec![],
             indicator: default_indicator(),
             show_in_dock: false,
+            tray_link: None,
             imported: false,
             warning: combine_warnings(recovery_warning, damaged_warning),
         });
@@ -235,26 +239,41 @@ fn load_from(stored: Value, imported: bool) -> Loaded {
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    let tray_link = obj
+        .get("trayLink")
+        .and_then(|v| v.as_str())
+        .and_then(normalize_tray_link);
+
     Loaded {
         requests,
         indicator,
         show_in_dock,
+        tray_link,
         imported,
         warning: None,
     }
+}
+
+/// Only a web link is worth a click-through, and only a web link is safe to
+/// hand to the OS opener; anything else in the stored document is dropped.
+pub fn normalize_tray_link(link: &str) -> Option<String> {
+    let link = link.trim();
+    let lower = link.to_ascii_lowercase();
+    (lower.starts_with("https://") || lower.starts_with("http://")).then(|| link.to_string())
 }
 
 pub fn save(
     app: &tauri::AppHandle,
     indicator: &str,
     show_in_dock: bool,
+    tray_link: Option<&str>,
     requests: &[Request],
 ) -> Result<(), String> {
     let path = settings_path(app)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let doc = settings_document(indicator, show_in_dock, requests);
+    let doc = settings_document(indicator, show_in_dock, tray_link, requests);
     let body = serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
     write_recoverable(&path, body.as_bytes())
 }
@@ -276,10 +295,12 @@ fn rule_state_document(states: &RuleStates) -> Value {
 /// Starts a small write-ahead transaction for configuration changes that also
 /// reset graph or alert state. If the process exits before commit, startup
 /// restores these complete previous documents before loading any of them.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn begin_state_transaction(
     app: &tauri::AppHandle,
     indicator: &str,
     show_in_dock: bool,
+    tray_link: Option<&str>,
     requests: &[Request],
     history: &SeriesHistory,
     rules: &RuleStates,
@@ -289,7 +310,7 @@ pub(crate) fn begin_state_transaction(
     let journal = StateTransactionJournal {
         schema_version: 1,
         transaction_id,
-        settings: settings_document(indicator, show_in_dock, requests),
+        settings: settings_document(indicator, show_in_dock, tray_link, requests),
         history: history_document(history),
         alert_state: rule_state_document(rules),
     };
@@ -715,6 +736,35 @@ fn sync_parent(path: &std::path::Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tray_link_round_trips_and_rejects_non_web_schemes() {
+        let stored = serde_json::json!({
+            "schemaVersion": 3,
+            "indicator": "chevron",
+            "showInDock": false,
+            "trayLink": "  https://example.com/dash  ",
+            "requests": [],
+        });
+        let loaded = load_from(stored, false);
+        assert_eq!(
+            loaded.tray_link.as_deref(),
+            Some("https://example.com/dash")
+        );
+
+        for hostile in ["file:///etc/passwd", "javascript:alert(1)", "ftp://x", ""] {
+            let stored = serde_json::json!({ "trayLink": hostile, "requests": [] });
+            assert_eq!(load_from(stored, false).tray_link, None, "{hostile}");
+        }
+
+        let doc = settings_document("chevron", false, Some("https://example.com"), &[]);
+        assert_eq!(
+            doc.get("trayLink").and_then(|v| v.as_str()),
+            Some("https://example.com")
+        );
+        let doc = settings_document("chevron", false, None, &[]);
+        assert!(doc.get("trayLink").is_none());
+    }
 
     fn temporary_directory(label: &str) -> std::path::PathBuf {
         let nonce = std::time::SystemTime::now()

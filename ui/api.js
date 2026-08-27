@@ -37,6 +37,10 @@ window.api = {
   // The About page's outbound links; the Rust side owns the URL table.
   openProjectLink: (target) => invoke('open_project_link', { target }),
   closeAbout: () => invoke('close_about'),
+  // The tray's left-click link preference, saved on its own outside the
+  // request form.
+  getTrayLink: () => invoke('get_tray_link'),
+  setTrayLink: (link) => invoke('set_tray_link', { link }),
   confirmRemove: (name) => invoke('confirm_remove', { name }),
   readLog: () => invoke('read_log'),
   log: (message) => invoke('ui_log', { message }),

@@ -1244,3 +1244,36 @@ window.addEventListener('DOMContentLoaded', async () => {
 });
 
 window.addEventListener('load', fit);
+
+// The tray's left-click link is an app preference, not part of the request
+// being edited: it saves itself on change and never marks the form dirty.
+const trayLinkField = document.getElementById('trayLink');
+const trayLinkError = document.getElementById('trayLinkError');
+if (trayLinkField && trayLinkError) {
+  window.api
+    .getTrayLink()
+    .then((link) => {
+      trayLinkField.value = link ?? '';
+    })
+    .catch(() => {});
+
+  trayLinkField.addEventListener('keydown', (event) => {
+    // Enter must commit this field, not submit the request form around it.
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      trayLinkField.blur();
+    }
+  });
+
+  trayLinkField.addEventListener('change', async () => {
+    try {
+      const saved = await window.api.setTrayLink(trayLinkField.value);
+      trayLinkField.value = saved ?? '';
+      trayLinkError.hidden = true;
+      trayLinkField.removeAttribute('aria-invalid');
+    } catch {
+      trayLinkError.hidden = false;
+      trayLinkField.setAttribute('aria-invalid', 'true');
+    }
+  });
+}

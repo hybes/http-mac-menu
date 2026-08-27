@@ -651,6 +651,39 @@
           </div>
         </section>
 
+        <section
+          class="editor-section desktop-only"
+          aria-labelledby="menubarHeading"
+        >
+          <div class="section-heading-row">
+            <h2 class="section-title" id="menubarHeading">Menu bar</h2>
+          </div>
+          <div class="card">
+            <div class="row">
+              <label class="row-label" for="trayLink">Left click opens</label>
+              <div class="row-control">
+                <input
+                  class="input"
+                  id="trayLink"
+                  type="text"
+                  autocapitalize="off"
+                  autocorrect="off"
+                  spellcheck="false"
+                  placeholder="https://example.com/dashboard"
+                  aria-describedby="trayLinkHint trayLinkError"
+                />
+                <span class="hint" id="trayLinkHint"
+                  >Applies to the whole menu bar item; the menu moves to right
+                  click. Leave empty to keep the menu on left click.</span
+                >
+                <span class="field-error" id="trayLinkError" role="alert" hidden
+                  >Enter a link that starts with http:// or https://.</span
+                >
+              </div>
+            </div>
+          </div>
+        </section>
+
         <div class="editor-footer">
           <button type="button" id="removeConfig" class="btn btn-danger">
             Remove request

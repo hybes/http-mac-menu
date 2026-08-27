@@ -142,6 +142,8 @@ pub fn run() {
             commands::open_notification_settings,
             commands::open_project_link,
             commands::close_about,
+            commands::set_tray_link,
+            commands::get_tray_link,
             commands::app_info,
             commands::confirm_remove,
             commands::read_log,
@@ -164,6 +166,7 @@ pub fn run() {
                     &handle,
                     &loaded.indicator,
                     loaded.show_in_dock,
+                    loaded.tray_link.as_deref(),
                     &loaded.requests,
                 );
             }
@@ -196,6 +199,7 @@ pub fn run() {
                 *state.requests.lock().unwrap() = loaded.requests;
                 *state.status.lock().unwrap() = cached_status;
                 *state.indicator.lock().unwrap() = loaded.indicator;
+                *state.tray_link.lock().unwrap() = loaded.tray_link;
                 *state.series_history.lock().unwrap() = history;
                 *state.rule_states.lock().unwrap() = rule_states;
                 state
@@ -233,9 +237,29 @@ pub fn run() {
             #[cfg(desktop)]
             {
                 use tauri::tray::TrayIconBuilder;
-                let mut tray_builder =
-                    TrayIconBuilder::with_id(TRAY_ID).on_menu_event(|app, event| {
+                let link_configured = handle
+                    .state::<AppState>()
+                    .tray_link
+                    .lock()
+                    .unwrap()
+                    .is_some();
+                let mut tray_builder = TrayIconBuilder::with_id(TRAY_ID)
+                    .on_menu_event(|app, event| {
                         handle_tray_menu_event(app, event.id().as_ref());
+                    })
+                    // With a link configured, a plain left click opens it and
+                    // the menu moves to right click. Linux tray items only do
+                    // menus, so there the menu stays on both buttons.
+                    .show_menu_on_left_click(!link_configured)
+                    .on_tray_icon_event(|tray, event| {
+                        if let tauri::tray::TrayIconEvent::Click {
+                            button: tauri::tray::MouseButton::Left,
+                            button_state: tauri::tray::MouseButtonState::Up,
+                            ..
+                        } = event
+                        {
+                            open_tray_link(tray.app_handle());
+                        }
                     });
                 if !cfg!(target_os = "macos") {
                     // macOS shows the live text as the whole tray; elsewhere
@@ -460,6 +484,9 @@ fn render_tray_desktop(app: &AppHandle) {
     let paused = state.is_paused();
     let views = snapshot_views(app);
     let login_enabled = autostart_enabled(app);
+    // Which button owns the menu follows the link preference live.
+    let link_configured = state.tray_link.lock().unwrap().is_some();
+    let _ = tray.set_show_menu_on_left_click(!link_configured);
     let indicator = state.indicator.lock().unwrap().clone();
     let status_map = {
         let status = state.status.lock().unwrap();
@@ -670,6 +697,20 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wr
 fn autostart_enabled(app: &AppHandle) -> bool {
     use tauri_plugin_autostart::ManagerExt;
     app.autolaunch().is_enabled().unwrap_or(false)
+}
+
+/// A left click while a link is configured. The event can still arrive with
+/// the link cleared (or on platforms that fire it regardless), and then the
+/// click simply does nothing.
+#[cfg(desktop)]
+fn open_tray_link(app: &AppHandle) {
+    let link = app.state::<AppState>().tray_link.lock().unwrap().clone();
+    let Some(link) = link else {
+        return;
+    };
+    if let Err(error) = app.opener().open_url(&link, None::<&str>) {
+        scheduler::log_line(app, &format!("Could not open {link}: {error}"));
+    }
 }
 
 #[cfg(desktop)]

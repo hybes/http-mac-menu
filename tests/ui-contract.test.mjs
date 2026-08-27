@@ -60,6 +60,15 @@ test('the about page keeps to the shell conventions and fixed links', () => {
   assert.doesNotMatch(html, /\sstyle=/);
   assert.ok(html.indexOf('src="api.js"') < html.indexOf('about.renderer.js'));
 
+  // The tray-link preference saves itself outside the request form: no
+  // data-key, so it can never mark the form dirty or ride along on Save.
+  const config = source['ui/config.html'];
+  const trayLinkTag = config.match(/<input[^>]*id="trayLink"[^>]*>/s)?.[0];
+  assert.ok(trayLinkTag);
+  assert.doesNotMatch(trayLinkTag, /data-key/);
+  assert.match(source['ui/config.renderer.js'], /getTrayLink/);
+  assert.match(source['ui/config.renderer.js'], /setTrayLink/);
+
   const renderer = source['ui/about.renderer.js'];
   assert.match(renderer, /openProjectLink/);
   // Escape puts the window away, and links stay symbolic; the Rust side owns
