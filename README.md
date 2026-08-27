@@ -185,8 +185,8 @@ cannot be implemented by a Tauri webview. They consume the same versioned
 `widget-snapshot.json`; no business logic or external application server is
 duplicated there.
 
-The UI contract is documented in `design.md`; its shared colour, type, spacing,
-control and motion values live in `tokens.css`. Both pages consume the same
+The UI's shared colour, type, spacing, control and motion values live in
+`tokens.css`. Both pages consume the same
 compiled stylesheet and adapt through platform classes rather than separate
 desktop and phone interfaces.
 

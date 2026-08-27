@@ -18,6 +18,8 @@ const files = await Promise.all(
   [
     'ui/index.html',
     'ui/config.html',
+    'ui/about.html',
+    'ui/about.renderer.js',
     'ui/api.js',
     'ui/reliability.js',
     'ui/list.renderer.js',
@@ -25,7 +27,6 @@ const files = await Promise.all(
     'ui/notifications.js',
     'styles.css',
     'tokens.css',
-    'design.md',
   ].map(async (path) => [path, await read(path)])
 );
 const source = Object.fromEntries(files);
@@ -47,6 +48,22 @@ test('both pages use the shared safe-area app shell', () => {
     assert.doesNotMatch(html, /class="[^"]*\btitlebar\b/);
     assert.doesNotMatch(html, /\sstyle=/);
   }
+});
+
+test('the about page keeps to the shell conventions and fixed links', () => {
+  const html = source['ui/about.html'];
+  assert.match(html, /class="app-shell [^"]+"/);
+  assert.match(html, /class="app-bar [^"]+"/);
+  assert.match(html, /class="app-content [^"]+"/);
+  assert.match(html, /data-tauri-drag-region/);
+  assert.match(html, /id="aboutVersion"/);
+  assert.doesNotMatch(html, /\sstyle=/);
+  assert.ok(html.indexOf('src="api.js"') < html.indexOf('about.renderer.js'));
+
+  const renderer = source['ui/about.renderer.js'];
+  assert.match(renderer, /openProjectLink/);
+  // Links stay symbolic; the Rust side owns the URL table.
+  assert.doesNotMatch(renderer, /https?:/);
 });
 
 test('home exposes graphs and useful quick actions', () => {
@@ -376,7 +393,6 @@ test('native-feeling interaction safeguards remain in the design system', () => 
   assert.match(tokens, /--color-accent-text:/);
   assert.match(tokens, /--color-data:/);
   assert.doesNotMatch(source['ui/api.js'], /setProperty\('--color-focus'/);
-  assert.match(source['design.md'], /Workbench/);
 
   const mobileRule =
     css.match(/\.mobile \.app-content\s*\{([^}]*)\}/)?.[1] ?? '';

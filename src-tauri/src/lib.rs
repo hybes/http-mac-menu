@@ -46,6 +46,8 @@ const TRAY_ID: &str = "http-widgets-tray";
 #[cfg(desktop)]
 const CONFIG_WINDOW_LABEL: &str = "config";
 #[cfg(desktop)]
+const ABOUT_WINDOW_LABEL: &str = "about";
+#[cfg(desktop)]
 static DISCARD_PROMPT_OPEN: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 /// The single webview a phone gets. It is created up front because there is
@@ -138,6 +140,7 @@ pub fn run() {
             commands::enable_notifications,
             commands::send_test_notification,
             commands::open_notification_settings,
+            commands::open_project_link,
             commands::app_info,
             commands::confirm_remove,
             commands::read_log,
@@ -655,14 +658,9 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wr
     let notifications = notifications.build()?;
     menu = menu.item(&notifications).separator();
 
-    let version = MenuItemBuilder::with_id(
-        "version",
-        format!("HTTP Widgets {}", app.package_info().version),
-    )
-    .enabled(false)
-    .build(app)?;
+    let about = MenuItemBuilder::with_id("about", "About HTTP Widgets…").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
-    menu = menu.item(&version).item(&quit);
+    menu = menu.item(&about).item(&quit);
 
     menu.build()
 }
@@ -774,6 +772,9 @@ fn handle_tray_menu_event(app: &AppHandle, id: &str) {
                 scheduler::log_line(app, &format!("Could not open log: {e}"));
             }
         }
+        "about" | "menu-about" => {
+            open_about(app);
+        }
         "menu-close" | "menu-hide" => {
             // Cmd-W and Cmd-Q both put the settings away; the app carries on
             // in the menu bar. The dirty check still runs.
@@ -800,19 +801,22 @@ fn paused_for_menu_event(id: &str) -> Option<bool> {
 //
 // The app is a menu bar extra (LSUIElement in src-tauri/Info.plist), so by
 // default it has no Dock icon and no place in the app switcher. That is right
-// while it is only a menu bar title, and wrong while a settings window is
-// open — an on-screen window you cannot Cmd-Tab to is a dead end. So the
-// policy follows whichever is true: the user asked to always show in the Dock,
-// or the settings window is visible.
+// while it is only a menu bar title, and wrong while a settings or About
+// window is open — an on-screen window you cannot Cmd-Tab to is a dead end.
+// So the policy follows whichever is true: the user asked to always show in
+// the Dock, or one of the app's windows is visible.
 // ---------------------------------------------------------------------------
 
 #[cfg(target_os = "macos")]
 pub fn apply_activation_policy(app: &AppHandle) {
-    let config_visible = app
-        .get_webview_window(CONFIG_WINDOW_LABEL)
-        .and_then(|window| window.is_visible().ok())
-        .unwrap_or(false);
-    let wanted = app.state::<AppState>().show_in_dock.load(Ordering::SeqCst) || config_visible;
+    let window_visible = [CONFIG_WINDOW_LABEL, ABOUT_WINDOW_LABEL]
+        .iter()
+        .any(|label| {
+            app.get_webview_window(label)
+                .and_then(|window| window.is_visible().ok())
+                .unwrap_or(false)
+        });
+    let wanted = app.state::<AppState>().show_in_dock.load(Ordering::SeqCst) || window_visible;
     let policy = if wanted {
         tauri::ActivationPolicy::Regular
     } else {
@@ -823,6 +827,59 @@ pub fn apply_activation_policy(app: &AppHandle) {
     }
 }
 
+/// A small fixed page: icon, name, version, and the project's links. It closes
+/// for real rather than hiding — there is nothing on it worth keeping alive.
+#[cfg(desktop)]
+fn open_about(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(ABOUT_WINDOW_LABEL) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        #[cfg(target_os = "macos")]
+        apply_activation_policy(app);
+        let _ = window.set_focus();
+        return;
+    }
+
+    let builder = WebviewWindowBuilder::new(
+        app,
+        ABOUT_WINDOW_LABEL,
+        WebviewUrl::App("about.html".into()),
+    )
+    .title("About HTTP Widgets")
+    .inner_size(320.0, 420.0)
+    .resizable(false)
+    .maximizable(false)
+    .minimizable(false)
+    .zoom_hotkeys_enabled(false);
+
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .allow_link_preview(false);
+
+    match builder.build() {
+        Ok(window) => {
+            // The Dock policy counts visible windows, so it moves when this
+            // one appears and again when it goes away.
+            #[cfg(target_os = "macos")]
+            {
+                let handle = app.clone();
+                window.on_window_event(move |event| {
+                    if matches!(event, tauri::WindowEvent::Destroyed) {
+                        apply_activation_policy(&handle);
+                    }
+                });
+                apply_activation_policy(app);
+            }
+            let _ = window.set_focus();
+        }
+        Err(error) => {
+            scheduler::log_line(app, &format!("Could not open the About window: {error}"));
+        }
+    }
+}
+
 /// Without a menu, a macOS webview has no Cmd-C, Cmd-V or Cmd-A — the standard
 /// edit commands are menu key equivalents, not built into the text fields. The
 /// app menu also decides what Cmd-Q does: for a menu bar app, closing the
@@ -830,8 +887,6 @@ pub fn apply_activation_policy(app: &AppHandle) {
 /// is moved to Cmd-Shift-Q and the tray.
 #[cfg(target_os = "macos")]
 fn install_app_menu(app: &AppHandle) -> tauri::Result<()> {
-    use tauri::menu::{AboutMetadata, PredefinedMenuItem};
-
     let close = MenuItemBuilder::with_id("menu-close", "Close Settings")
         .accelerator("CmdOrCtrl+W")
         .build(app)?;
@@ -842,12 +897,11 @@ fn install_app_menu(app: &AppHandle) -> tauri::Result<()> {
         .accelerator("CmdOrCtrl+Shift+Q")
         .build(app)?;
 
+    // The About item opens the app's own page instead of the system panel, so
+    // the tray and the menu bar tell the same story.
+    let about = MenuItemBuilder::with_id("menu-about", "About HTTP Widgets").build(app)?;
     let app_menu = SubmenuBuilder::new(app, "HTTP Widgets")
-        .item(&PredefinedMenuItem::about(
-            app,
-            Some("About HTTP Widgets"),
-            Some(AboutMetadata::default()),
-        )?)
+        .item(&about)
         .separator()
         .item(&hide_settings)
         .item(&quit)

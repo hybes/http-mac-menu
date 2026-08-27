@@ -1,7 +1,7 @@
 {
   "name": "http-widgets",
   "productName": "HTTP Widgets",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Little live values from any API, pinned to your surfaces",
   "private": true,
   "scripts": {
@@ -10,9 +10,9 @@
     "dev": "tauri dev",
     "build": "tauri build",
     "test": "npm run test:ui && npm run test:rust",
-    "test:ui": "node --check ui/api.js && node --check ui/config.renderer.js && node --check ui/list.renderer.js && node --check ui/notifications.js && node --test tests/ui-contract.test.mjs",
+    "test:ui": "node --check ui/api.js && node --check ui/about.renderer.js && node --check ui/config.renderer.js && node --check ui/list.renderer.js && node --check ui/notifications.js && node --test tests/ui-contract.test.mjs",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
-    "format:check": "prettier --check package.json README.md design.md tokens.css styles.css scripts tests ui .hallmark .github/workflows",
+    "format:check": "prettier --check package.json README.md tokens.css styles.css scripts tests ui .github/workflows",
     "check": "npm run format:check && npm run check:css && npm test",
     "format": "prettier --write .",
     "tauri": "tauri"

@@ -34,6 +34,8 @@ window.api = {
     return invoke('open_notification_settings');
   },
   appInfo: () => invoke('app_info'),
+  // The About page's outbound links; the Rust side owns the URL table.
+  openProjectLink: (target) => invoke('open_project_link', { target }),
   confirmRemove: (name) => invoke('confirm_remove', { name }),
   readLog: () => invoke('read_log'),
   log: (message) => invoke('ui_log', { message }),

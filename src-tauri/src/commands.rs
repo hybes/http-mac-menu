@@ -757,6 +757,22 @@ pub fn open_notification_settings(app: AppHandle) -> Result<(), String> {
     crate::notifications::open_settings(&app)
 }
 
+/// The About page's outbound links. A fixed table rather than a URL argument,
+/// so the webview cannot ask the OS to open anything else.
+#[tauri::command]
+pub fn open_project_link(app: AppHandle, target: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let url = match target.as_str() {
+        "repo" => "https://github.com/hybes/http-mac-menu",
+        "releases" => "https://github.com/hybes/http-mac-menu/releases/latest",
+        "support" => "mailto:help@cnnct.uk",
+        _ => return Err(format!("Unknown link: {target}")),
+    };
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|error| error.to_string())
+}
+
 fn current_time_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

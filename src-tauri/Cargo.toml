@@ -1,6 +1,6 @@
 [package]
 name = "http-widgets"
-version = "2.0.0"
+version = "2.0.1"
 description = "Little live values from any API, pinned to your surfaces"
 authors = ["Connect Dorset"]
 license = "ISC"

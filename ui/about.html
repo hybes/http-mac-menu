@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <title>About HTTP Widgets</title>
+    <link rel="stylesheet" href="output.css" />
+    <script src="api.js"></script>
+  </head>
+  <body class="app-shell about-shell">
+    <header class="app-bar about-app-bar">
+      <div
+        class="app-bar-drag-region desktop-only"
+        data-tauri-drag-region
+        aria-hidden="true"
+      ></div>
+    </header>
+    <main class="app-content about-page">
+      <img
+        class="about-icon"
+        src="about-icon.png"
+        alt=""
+        width="112"
+        height="112"
+      />
+      <h1 class="about-name">HTTP Widgets</h1>
+      <p class="about-version" id="aboutVersion"></p>
+      <p class="about-tagline">
+        Little live values from any API, pinned to your surfaces.
+      </p>
+      <div class="about-links">
+        <button type="button" class="btn" id="aboutRepo">GitHub</button>
+        <button type="button" class="btn" id="aboutReleases">Releases</button>
+        <button type="button" class="btn" id="aboutSupport">Support</button>
+      </div>
+      <p class="about-credit">Made by Connect Dorset</p>
+    </main>
+    <script src="about.renderer.js"></script>
+  </body>
+</html>
