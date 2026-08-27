@@ -81,8 +81,8 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        CFBundleShortVersionString: 2.0.1
-        CFBundleVersion: "2.0.1"
+        CFBundleShortVersionString: 2.0.2
+        CFBundleVersion: "2.0.2"
     entitlements:
       path: http-widgets_iOS/http-widgets_iOS.entitlements
       properties:
@@ -155,8 +155,8 @@ targets:
       path: ../../ios-widget/Info.plist
       properties:
         CFBundleDisplayName: HTTP Widgets
-        CFBundleShortVersionString: 2.0.1
-        CFBundleVersion: "2.0.1"
+        CFBundleShortVersionString: 2.0.2
+        CFBundleVersion: "2.0.2"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     entitlements:
@@ -167,8 +167,8 @@ targets:
       base:
         PRODUCT_NAME: HttpWidgetsWidget
         PRODUCT_BUNDLE_IDENTIFIER: com.hybes.http-widget.widget
-        MARKETING_VERSION: "2.0.1"
-        CURRENT_PROJECT_VERSION: "2.0.1"
+        MARKETING_VERSION: "2.0.2"
+        CURRENT_PROJECT_VERSION: "2.0.2"
         TARGETED_DEVICE_FAMILY: "1,2"
         SKIP_INSTALL: true
         ENABLE_BITCODE: false

@@ -757,6 +757,14 @@ pub fn open_notification_settings(app: AppHandle) -> Result<(), String> {
     crate::notifications::open_settings(&app)
 }
 
+/// Escape on the About page. Desktop hides the window the same way its close
+/// button does; phones never open one.
+#[tauri::command]
+pub fn close_about(_app: AppHandle) {
+    #[cfg(desktop)]
+    crate::close_about_window(&_app);
+}
+
 /// The About page's outbound links. A fixed table rather than a URL argument,
 /// so the webview cannot ask the OS to open anything else.
 #[tauri::command]

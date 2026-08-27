@@ -1,7 +1,7 @@
 {
   "name": "http-widgets",
   "productName": "HTTP Widgets",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Little live values from any API, pinned to your surfaces",
   "private": true,
   "scripts": {

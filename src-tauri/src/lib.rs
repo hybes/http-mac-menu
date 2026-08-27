@@ -141,6 +141,7 @@ pub fn run() {
             commands::send_test_notification,
             commands::open_notification_settings,
             commands::open_project_link,
+            commands::close_about,
             commands::app_info,
             commands::confirm_remove,
             commands::read_log,
@@ -827,8 +828,10 @@ pub fn apply_activation_policy(app: &AppHandle) {
     }
 }
 
-/// A small fixed page: icon, name, version, and the project's links. It closes
-/// for real rather than hiding — there is nothing on it worth keeping alive.
+/// A small fixed page: icon, name, version, and the project's links. Like the
+/// settings window it hides instead of closing: when it is the only webview,
+/// really closing it would count as the last window going away, and that
+/// quits the whole app.
 #[cfg(desktop)]
 fn open_about(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(ABOUT_WINDOW_LABEL) {
@@ -860,23 +863,40 @@ fn open_about(app: &AppHandle) {
 
     match builder.build() {
         Ok(window) => {
-            // The Dock policy counts visible windows, so it moves when this
-            // one appears and again when it goes away.
+            let guarded = window.clone();
+            window.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let app = guarded.app_handle().clone();
+                    hide_about_window(&app, &guarded);
+                }
+            });
             #[cfg(target_os = "macos")]
-            {
-                let handle = app.clone();
-                window.on_window_event(move |event| {
-                    if matches!(event, tauri::WindowEvent::Destroyed) {
-                        apply_activation_policy(&handle);
-                    }
-                });
-                apply_activation_policy(app);
-            }
+            apply_activation_policy(app);
             let _ = window.set_focus();
         }
         Err(error) => {
             scheduler::log_line(app, &format!("Could not open the About window: {error}"));
         }
+    }
+}
+
+#[cfg(desktop)]
+fn hide_about_window(app: &AppHandle, window: &tauri::WebviewWindow<tauri::Wry>) {
+    if let Err(error) = window.hide() {
+        scheduler::log_line(app, &format!("Could not hide the About window: {error}"));
+        return;
+    }
+    // The Dock policy counts visible windows, so it moves when this one goes.
+    #[cfg(target_os = "macos")]
+    apply_activation_policy(app);
+}
+
+/// Escape on the About page arrives here through a command.
+#[cfg(desktop)]
+pub fn close_about_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(ABOUT_WINDOW_LABEL) {
+        hide_about_window(app, &window);
     }
 }
 

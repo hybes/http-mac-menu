@@ -169,7 +169,9 @@ jobs:
         # $ANDROID_HOME/cmdline-tools.
         run: |
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          yes | "$SDKMANAGER" --licenses > /dev/null
+          # `yes` dies of SIGPIPE when sdkmanager stops reading, and this
+          # shell runs with pipefail, so the license step must not be fatal.
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
           "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "ndk;28.1.13356709"
           echo "NDK_HOME=$ANDROID_HOME/ndk/28.1.13356709" >> "$GITHUB_ENV"
 

@@ -12,6 +12,13 @@ for (const [id, target] of Object.entries(LINKS)) {
   });
 }
 
+window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    window.api.closeAbout().catch(() => {});
+  }
+});
+
 window.api
   .appInfo()
   .then((info) => {

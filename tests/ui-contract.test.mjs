@@ -62,7 +62,9 @@ test('the about page keeps to the shell conventions and fixed links', () => {
 
   const renderer = source['ui/about.renderer.js'];
   assert.match(renderer, /openProjectLink/);
-  // Links stay symbolic; the Rust side owns the URL table.
+  // Escape puts the window away, and links stay symbolic; the Rust side owns
+  // both the hide and the URL table.
+  assert.match(renderer, /'Escape'/);
   assert.doesNotMatch(renderer, /https?:/);
 });
 
