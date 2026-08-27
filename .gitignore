@@ -1,4 +1,19 @@
 .DS_Store
 dist
 node_modules
-output.css
+
+# Rust
+src-tauri/target/
+
+# Tauri generated platform projects — committed, because both carry
+# hand-written widget customisations (see gen/apple/project.yml and the
+# Android HttpWidgetsWidgetProvider) — but never their build outputs.
+src-tauri/gen/schemas/
+src-tauri/gen/apple/build/
+src-tauri/gen/apple/export/
+**/xcuserdata/
+src-tauri/gen/android/.gradle/
+src-tauri/gen/android/build/
+src-tauri/gen/android/app/build/
+src-tauri/gen/android/local.properties
+src-tauri/gen/android/app/src/main/jniLibs/

@@ -1,0 +1,694 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <title>HTTP Widgets</title>
+    <link rel="stylesheet" href="output.css" />
+    <script src="api.js"></script>
+  </head>
+  <body class="app-shell editor-shell">
+    <form id="configForm" novalidate inert aria-busy="true">
+      <header class="app-bar editor-app-bar">
+        <div
+          class="app-bar-drag-region desktop-only"
+          data-tauri-drag-region
+          aria-hidden="true"
+        ></div>
+        <div class="app-bar-inner">
+          <button type="button" id="closeConfig" class="btn editor-back">
+            Back
+          </button>
+          <div class="app-bar-title editor-app-title">
+            <h1 id="heading" class="page-title">Request</h1>
+          </div>
+          <button type="submit" id="saveConfig" class="btn btn-primary">
+            Save
+          </button>
+        </div>
+      </header>
+
+      <main class="app-content editor-page">
+        <section
+          class="preset-chooser"
+          id="presetChooser"
+          aria-labelledby="presetHeading"
+          hidden
+        >
+          <div class="section-heading-row">
+            <h2 class="section-title" id="presetHeading">
+              Start with a preset
+            </h2>
+            <button
+              type="button"
+              class="btn preset-close"
+              id="hidePresetChooser"
+              hidden
+            >
+              Cancel
+            </button>
+          </div>
+          <div class="preset-grid" id="presetCards" role="list"></div>
+          <select id="presetSelect" hidden aria-hidden="true" tabindex="-1">
+            <option value="">Choose a preset</option>
+          </select>
+          <div
+            class="preset-confirm"
+            id="presetConfirm"
+            role="group"
+            aria-labelledby="presetConfirmTitle"
+            aria-describedby="presetConfirmMessage"
+            hidden
+          >
+            <div>
+              <h3 class="preset-confirm-title" id="presetConfirmTitle">
+                Replace this source?
+              </h3>
+              <p class="preset-confirm-message" id="presetConfirmMessage"></p>
+            </div>
+            <div class="preset-confirm-actions">
+              <button type="button" class="btn" id="cancelPresetReplace">
+                Keep current
+              </button>
+              <button
+                type="button"
+                class="btn btn-danger"
+                id="confirmPresetReplace"
+              >
+                Replace source
+              </button>
+            </div>
+          </div>
+        </section>
+        <div class="preset-feedback" id="presetUndo" role="status" hidden>
+          <span id="presetUndoMessage">Source replaced.</span>
+          <button type="button" class="btn" id="undoPresetReplace">Undo</button>
+        </div>
+        <p class="hint preset-hint" id="presetHint" aria-live="polite" hidden>
+          Preset loaded. Save to keep it.
+        </p>
+
+        <section class="editor-section" aria-labelledby="sourceHeading">
+          <div class="section-heading-row">
+            <h2 class="section-title" id="sourceHeading">Source</h2>
+            <button
+              type="button"
+              class="btn section-action"
+              id="showPresetChooser"
+              hidden
+            >
+              Replace source
+            </button>
+          </div>
+
+          <div class="card">
+            <div class="row row-center">
+              <span class="row-label">Type</span>
+              <div class="row-control">
+                <div class="segmented" role="radiogroup" aria-label="Type">
+                  <label class="segment">
+                    <input type="radio" name="type" value="http" checked />
+                    <span>HTTP</span>
+                  </label>
+                  <label class="segment">
+                    <input type="radio" name="type" value="crypto" />
+                    <span>Crypto</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div class="row" data-type="http">
+              <label class="row-label" for="url">URL</label>
+              <div class="row-control">
+                <textarea
+                  class="input"
+                  id="url"
+                  autocapitalize="off"
+                  autocorrect="off"
+                  data-key="url"
+                  rows="2"
+                  spellcheck="false"
+                  placeholder="https://api.example.com/v1/price"
+                  aria-describedby="urlError"
+                  required
+                ></textarea>
+                <span class="field-error" id="urlError" role="alert" hidden
+                  >Enter an HTTP or HTTPS URL.</span
+                >
+              </div>
+            </div>
+
+            <div class="row" data-type="crypto">
+              <label class="row-label" for="provider">Price source</label>
+              <div class="row-control">
+                <select
+                  class="input provider-select"
+                  id="provider"
+                  data-key="provider"
+                  aria-describedby="providerHint"
+                >
+                  <option value="auto">Automatic · recommended</option>
+                  <option value="jupiter">Jupiter · Solana live</option>
+                  <option value="dexscreener">DEX Screener · pool price</option>
+                  <option value="coingecko">CoinGecko · global</option>
+                </select>
+                <span class="hint" id="providerHint"
+                  >Jupiter for SOL and Solana mints, with fiat conversion.</span
+                >
+              </div>
+            </div>
+
+            <div class="row" data-type="crypto">
+              <label class="row-label" for="coin">Coin</label>
+              <div class="row-control">
+                <div class="row-pair">
+                  <input
+                    class="input"
+                    type="text"
+                    id="coin"
+                    autocapitalize="off"
+                    autocorrect="off"
+                    data-key="coin"
+                    spellcheck="false"
+                    placeholder="SOL"
+                    aria-describedby="coinHint coinError"
+                    required
+                  />
+                  <label class="row-pair-label" for="holdings">Holdings</label>
+                  <input
+                    class="input"
+                    type="text"
+                    inputmode="decimal"
+                    id="holdings"
+                    autocapitalize="off"
+                    autocorrect="off"
+                    data-key="holdings"
+                    placeholder="100"
+                    aria-describedby="holdingsError"
+                  />
+                </div>
+                <span class="hint" id="coinHint"
+                  >Ticker, CoinGecko ID or Solana mint. Holdings are
+                  optional.</span
+                >
+                <span class="field-error" id="coinError" role="alert" hidden
+                  >Enter a ticker, coin ID or Solana mint.</span
+                >
+                <span
+                  class="field-error holdings-error"
+                  id="holdingsError"
+                  role="alert"
+                  hidden
+                  >Enter holdings as a number, without separators.</span
+                >
+              </div>
+            </div>
+
+            <details class="advanced-panel" data-type="http">
+              <summary class="advanced-summary">Advanced HTTP</summary>
+              <div class="advanced-content">
+                <div class="row">
+                  <label class="row-label" for="headers">Headers</label>
+                  <div class="row-control">
+                    <textarea
+                      class="input"
+                      id="headers"
+                      autocapitalize="off"
+                      autocorrect="off"
+                      data-key="headers"
+                      rows="2"
+                      spellcheck="false"
+                      placeholder="X-API-Key: abc123"
+                      aria-describedby="headersHint headersError"
+                    ></textarea>
+                    <span class="hint" id="headersHint"
+                      >Optional. One <code>Name: value</code> per line.</span
+                    >
+                    <span
+                      class="field-error"
+                      id="headersError"
+                      role="alert"
+                      hidden
+                    ></span>
+                  </div>
+                </div>
+
+                <div class="row">
+                  <label class="row-label" for="curlInput">cURL</label>
+                  <div class="row-control">
+                    <textarea
+                      class="input"
+                      id="curlInput"
+                      autocapitalize="off"
+                      autocorrect="off"
+                      rows="3"
+                      spellcheck="false"
+                      placeholder="curl 'https://api.example.com' -H 'X-API-Key: abc123'"
+                    ></textarea>
+                    <div class="field-actions">
+                      <button type="button" class="btn" id="importCurl">
+                        Import cURL
+                      </button>
+                      <span
+                        class="hint status-error"
+                        id="curlWarnings"
+                        role="status"
+                        aria-live="polite"
+                        hidden
+                      ></span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="row">
+                  <label class="row-label" for="json">JSON path</label>
+                  <div class="row-control">
+                    <input
+                      class="input"
+                      type="text"
+                      id="json"
+                      autocapitalize="off"
+                      autocorrect="off"
+                      data-key="json"
+                      spellcheck="false"
+                      placeholder="data.price"
+                    />
+                    <span class="hint"
+                      >Leave blank for plain text. Arrays use
+                      <code>items[0].value</code>.</span
+                    >
+                  </div>
+                </div>
+
+                <div class="row">
+                  <label class="row-label" for="multiplier">Format</label>
+                  <div class="row-control">
+                    <div class="row-pair">
+                      <input
+                        class="input"
+                        type="text"
+                        inputmode="decimal"
+                        id="multiplier"
+                        autocapitalize="off"
+                        autocorrect="off"
+                        data-key="multiplier"
+                        placeholder="Multiplier"
+                      />
+                      <label class="row-pair-label" for="length"
+                        >Decimals</label
+                      >
+                      <input
+                        class="input"
+                        type="text"
+                        inputmode="numeric"
+                        id="length"
+                        autocapitalize="off"
+                        autocorrect="off"
+                        data-key="length"
+                        placeholder="2"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </details>
+          </div>
+        </section>
+
+        <section class="editor-section" aria-labelledby="displayHeading">
+          <div class="section-heading-row">
+            <h2 class="section-title" id="displayHeading">Display</h2>
+          </div>
+
+          <div class="card">
+            <div class="row">
+              <label class="row-label" for="label">Name</label>
+              <div class="row-control">
+                <input
+                  class="input"
+                  type="text"
+                  id="label"
+                  data-key="label"
+                  placeholder="Request 1"
+                />
+                <span class="hint"
+                  >Shown instead of <span data-slot-name>Request 1</span>.</span
+                >
+              </div>
+            </div>
+
+            <div class="row" data-type="crypto">
+              <label class="row-label" for="currency">Currency</label>
+              <div class="row-control">
+                <div class="row-pair">
+                  <input
+                    class="input"
+                    type="text"
+                    id="currency"
+                    autocapitalize="off"
+                    autocorrect="off"
+                    data-key="currency"
+                    spellcheck="false"
+                    placeholder="gbp"
+                    aria-describedby="currencyError"
+                  />
+                  <label class="row-pair-label" for="cryptoDecimals"
+                    >Decimals</label
+                  >
+                  <input
+                    class="input"
+                    type="text"
+                    inputmode="numeric"
+                    id="cryptoDecimals"
+                    autocapitalize="off"
+                    autocorrect="off"
+                    data-mirror="length"
+                    placeholder="2"
+                  />
+                </div>
+                <div class="choice-chips" aria-label="Common currencies">
+                  <button type="button" class="choice-chip" data-currency="gbp">
+                    GBP
+                  </button>
+                  <button type="button" class="choice-chip" data-currency="usd">
+                    USD
+                  </button>
+                  <button type="button" class="choice-chip" data-currency="eur">
+                    EUR
+                  </button>
+                  <button type="button" class="choice-chip" data-currency="jpy">
+                    JPY
+                  </button>
+                </div>
+                <span class="field-error" id="currencyError" role="alert" hidden
+                  >Choose a supported currency.</span
+                >
+              </div>
+            </div>
+
+            <div class="row" data-type="crypto">
+              <label class="row-label" for="template">Template</label>
+              <div class="row-control">
+                <input
+                  class="input"
+                  type="text"
+                  id="template"
+                  autocapitalize="off"
+                  autocorrect="off"
+                  data-key="template"
+                  spellcheck="false"
+                  placeholder="{symbol} {balance} {change24h}"
+                />
+                <div
+                  class="choice-chips template-chips"
+                  aria-label="Insert a template variable"
+                >
+                  <button
+                    type="button"
+                    class="choice-chip"
+                    data-template-variable="{symbol}"
+                  >
+                    {symbol}
+                  </button>
+                  <button
+                    type="button"
+                    class="choice-chip"
+                    data-template-variable="{price}"
+                  >
+                    {price}
+                  </button>
+                  <button
+                    type="button"
+                    class="choice-chip"
+                    data-template-variable="{balance}"
+                  >
+                    {balance}
+                  </button>
+                  <button
+                    type="button"
+                    class="choice-chip"
+                    data-template-variable="{change24h}"
+                  >
+                    {change24h}
+                  </button>
+                  <button
+                    type="button"
+                    class="choice-chip"
+                    data-template-variable="{gain24h}"
+                  >
+                    {gain24h}
+                  </button>
+                  <button
+                    type="button"
+                    class="choice-chip"
+                    data-template-variable="{source}"
+                  >
+                    {source}
+                  </button>
+                </div>
+                <details class="disclosure">
+                  <summary>All variables</summary>
+                  <p class="hint">
+                    <code>{name}</code> <code>{holdings}</code>
+                    <code>{change1m}</code> <code>{change5m}</code>
+                    <code>{change15m}</code> <code>{change30m}</code>
+                    <code>{change1h}</code> <code>{change7d}</code>
+                    <code>{change30d}</code>, plus matching
+                    <code>{gain…}</code> values and <code>{source}</code>.
+                    Longer periods depend on the chosen provider.
+                  </p>
+                </details>
+              </div>
+            </div>
+
+            <div class="row">
+              <label class="row-label" for="prefix">Affixes</label>
+              <div class="row-control">
+                <div class="row-pair">
+                  <input
+                    class="input"
+                    type="text"
+                    id="prefix"
+                    data-key="prefix"
+                    placeholder="Prefix"
+                  />
+                  <label class="row-pair-label" for="suffix">and</label>
+                  <input
+                    class="input"
+                    type="text"
+                    id="suffix"
+                    data-key="suffix"
+                    placeholder="Suffix"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div class="row row-center preview-row">
+              <span class="row-label">Preview</span>
+              <div class="row-control preview-control">
+                <button type="button" id="testConfig" class="btn">
+                  Test request
+                </button>
+                <span
+                  id="status"
+                  class="status"
+                  role="status"
+                  aria-live="polite"
+                ></span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="editor-section" aria-labelledby="scheduleHeading">
+          <div class="section-heading-row">
+            <h2 class="section-title" id="scheduleHeading">Schedule</h2>
+          </div>
+
+          <div class="card">
+            <div class="row">
+              <label class="row-label" for="timer">Refresh</label>
+              <div class="row-control">
+                <input
+                  class="input"
+                  type="text"
+                  inputmode="numeric"
+                  id="timer"
+                  autocapitalize="off"
+                  autocorrect="off"
+                  data-key="timer"
+                  placeholder="5"
+                  aria-describedby="timerHintHttp timerHintCrypto timerError"
+                />
+                <div class="choice-chips" aria-label="Common refresh intervals">
+                  <button
+                    type="button"
+                    class="choice-chip"
+                    data-refresh-seconds="5"
+                  >
+                    Live · 5s
+                  </button>
+                  <button
+                    type="button"
+                    class="choice-chip"
+                    data-refresh-seconds="15"
+                  >
+                    Fast · 15s
+                  </button>
+                  <button
+                    type="button"
+                    class="choice-chip"
+                    data-refresh-seconds="30"
+                  >
+                    Balanced · 30s
+                  </button>
+                  <button
+                    type="button"
+                    class="choice-chip"
+                    data-refresh-seconds="60"
+                  >
+                    Battery · 1m
+                  </button>
+                  <button
+                    type="button"
+                    class="choice-chip"
+                    data-refresh-seconds="300"
+                  >
+                    5 min
+                  </button>
+                  <button
+                    type="button"
+                    class="choice-chip"
+                    data-refresh-seconds="900"
+                  >
+                    15 min
+                  </button>
+                </div>
+                <span class="hint" id="timerHintHttp" data-type="http"
+                  >Minimum 5 seconds.</span
+                >
+                <span class="hint" id="timerHintCrypto" data-type="crypto"
+                  >Live Solana sources support 5 seconds.</span
+                >
+                <span class="field-error" id="timerError" role="alert" hidden
+                  >Choose a valid interval.</span
+                >
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="editor-section" aria-labelledby="alertsHeading">
+          <div class="section-heading-row">
+            <h2 class="section-title" id="alertsHeading">Alerts</h2>
+            <button type="button" class="btn section-action" id="addAlert">
+              Add alert
+            </button>
+          </div>
+
+          <div class="card alert-card">
+            <div class="alert-editor">
+              <div id="alertList" class="alert-list"></div>
+              <p class="hint alert-empty-hint" id="alertHint">
+                Notify when a value crosses a condition.
+              </p>
+              <section
+                class="notification-panel notification-panel-inline"
+                id="alertNotificationControls"
+                data-notification-controls
+                aria-labelledby="alertNotificationsHeading"
+                hidden
+              >
+                <div class="notification-copy">
+                  <div class="notification-heading-row">
+                    <span
+                      class="notification-indicator"
+                      aria-hidden="true"
+                    ></span>
+                    <h3
+                      class="notification-title"
+                      id="alertNotificationsHeading"
+                    >
+                      Notification access
+                    </h3>
+                  </div>
+                  <p
+                    class="notification-message"
+                    id="alertNotificationsMessage"
+                    data-notification-message
+                    role="status"
+                    aria-live="polite"
+                  >
+                    Checking notification access…
+                  </p>
+                </div>
+                <div class="notification-actions">
+                  <button
+                    type="button"
+                    class="btn"
+                    data-notification-enable
+                    aria-describedby="alertNotificationsMessage"
+                  >
+                    Enable
+                  </button>
+                  <button
+                    type="button"
+                    class="btn"
+                    data-notification-test
+                    aria-describedby="alertNotificationsMessage"
+                    disabled
+                  >
+                    Send test
+                  </button>
+                </div>
+              </section>
+            </div>
+          </div>
+        </section>
+
+        <div class="editor-footer">
+          <button type="button" id="removeConfig" class="btn btn-danger">
+            Remove request
+          </button>
+          <p class="footnote desktop-only">Esc closes · ⌘↩ saves</p>
+        </div>
+      </main>
+    </form>
+
+    <section
+      class="config-load-state"
+      id="configLoadState"
+      aria-labelledby="configLoadMessage"
+    >
+      <p
+        class="status"
+        id="configLoadMessage"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        Loading request…
+      </p>
+      <div class="config-load-actions">
+        <button type="button" class="btn" id="cancelConfigLoad">Back</button>
+        <button
+          type="button"
+          class="btn btn-primary"
+          id="retryConfigLoad"
+          hidden
+        >
+          Retry
+        </button>
+      </div>
+    </section>
+
+    <script src="reliability.js"></script>
+    <script src="notifications.js"></script>
+    <script src="config.renderer.js"></script>
+  </body>
+</html>

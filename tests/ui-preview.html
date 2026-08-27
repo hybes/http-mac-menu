@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HTTP Widgets UI preview</title>
+  </head>
+  <body>
+    <script type="module">
+      const params = new URLSearchParams(window.location.search);
+      const file =
+        params.get('page') === 'editor' ? 'config.html' : 'index.html';
+      const response = await fetch(`/ui/${file}`, { cache: 'no-store' });
+      let html = await response.text();
+      html = html
+        .replace('href="output.css"', 'href="/ui/output.css"')
+        .replace(
+          '<script src="api.js">',
+          '<script src="/tests/mock-tauri.js"><\/script><script src="/ui/api.js">'
+        )
+        .replaceAll('src="reliability.js"', 'src="/ui/reliability.js"')
+        .replaceAll('src="notifications.js"', 'src="/ui/notifications.js"')
+        .replaceAll('src="list.renderer.js"', 'src="/ui/list.renderer.js"')
+        .replaceAll('src="config.renderer.js"', 'src="/ui/config.renderer.js"');
+      document.open();
+      document.write(html);
+      document.close();
+    </script>
+  </body>
+</html>

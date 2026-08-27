@@ -1,0 +1,23 @@
+{
+  "date": "2026-08-23",
+  "framework": "Tauri 2 with shared vanilla HTML and JavaScript",
+  "pages": ["ui/index.html", "ui/config.html"],
+  "fontStack": "Apple/system UI plus system monospace",
+  "palette": "Existing blue accent with light/dark system surfaces",
+  "motion": "No motion library; CSS-only restrained interaction feedback",
+  "spacing": "Existing ad hoc values, replaced by a 4-point named scale",
+  "preserve": [
+    "single shared web UI",
+    "Rust local engine",
+    "native system accent support",
+    "light and dark appearance",
+    "existing app icon"
+  ],
+  "introduce": [
+    "adaptive native shell",
+    "Workbench information hierarchy",
+    "Cobalt semantic tokens",
+    "complete interaction states",
+    "mobile safe-area handling"
+  ]
+}

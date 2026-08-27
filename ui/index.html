@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <title>HTTP Widgets</title>
+    <link rel="stylesheet" href="output.css" />
+    <script src="api.js"></script>
+  </head>
+  <body class="app-shell home-shell">
+    <header class="app-bar home-app-bar">
+      <div
+        class="app-bar-drag-region desktop-only"
+        data-tauri-drag-region
+        aria-hidden="true"
+      ></div>
+      <div class="app-bar-inner">
+        <div class="app-bar-title">
+          <h1>HTTP Widgets</h1>
+          <span class="app-bar-meta" id="requestCount" aria-live="polite"
+            >Loading…</span
+          >
+        </div>
+        <div class="app-bar-actions" aria-label="Home actions">
+          <button
+            type="button"
+            class="btn icon-button"
+            id="copyAllValues"
+            aria-label="Copy all values"
+            title="Copy all values"
+            disabled
+          >
+            <svg
+              class="button-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <rect width="14" height="14" x="8" y="8" rx="2"></rect>
+              <path
+                d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"
+              ></path>
+            </svg>
+            <span class="visually-hidden" id="copyAllLabel"
+              >Copy all values</span
+            >
+          </button>
+          <button
+            type="button"
+            class="btn icon-button"
+            id="refreshAll"
+            aria-label="Refresh all requests"
+            title="Refresh all requests"
+            disabled
+          >
+            <svg
+              class="button-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5"></path>
+              <path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"></path>
+            </svg>
+            <span class="visually-hidden">Refresh all requests</span>
+          </button>
+          <button
+            type="button"
+            class="btn btn-primary"
+            id="addRequest"
+            aria-label="Add request"
+          >
+            <span class="add-request-label-full" aria-hidden="true"
+              >Add request</span
+            >
+            <span class="add-request-label-compact" aria-hidden="true"
+              >Add</span
+            >
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main class="app-content home-workbench">
+      <p
+        class="app-feedback status"
+        id="status"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      ></p>
+
+      <section
+        class="attention-banner paused-banner"
+        id="pausedBanner"
+        aria-labelledby="pausedHeading"
+        hidden
+      >
+        <div class="attention-banner-copy">
+          <h2 id="pausedHeading">Updates are paused</h2>
+          <p>Saved values stay visible until updates resume.</p>
+        </div>
+        <button type="button" class="btn" id="resumeUpdates">Resume</button>
+      </section>
+
+      <section
+        class="attention-banner background-refresh-banner"
+        id="backgroundRefreshBanner"
+        aria-labelledby="backgroundRefreshHeading"
+        hidden
+      >
+        <div class="attention-banner-copy">
+          <h2 id="backgroundRefreshHeading">Background refresh is off</h2>
+          <p id="backgroundRefreshMessage">
+            Values still refresh while HTTP Widgets is open.
+          </p>
+        </div>
+        <button type="button" class="btn" id="openBackgroundRefreshSettings">
+          Open Settings
+        </button>
+      </section>
+
+      <section
+        class="attention-banner notification-panel notification-banner"
+        id="notificationBanner"
+        data-notification-controls
+        aria-labelledby="notificationsHeading"
+        hidden
+      >
+        <span class="notification-indicator" aria-hidden="true"></span>
+        <div class="notification-copy">
+          <h2 class="notification-title" id="notificationsHeading">
+            Notifications need attention
+          </h2>
+          <p
+            class="notification-message"
+            id="notificationsMessage"
+            data-notification-message
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            Checking notification access…
+          </p>
+        </div>
+        <div class="notification-actions">
+          <button
+            type="button"
+            class="btn"
+            data-notification-enable
+            aria-describedby="notificationsMessage"
+          >
+            Enable
+          </button>
+          <button
+            type="button"
+            class="btn"
+            data-notification-test
+            aria-describedby="notificationsMessage"
+            hidden
+            disabled
+          >
+            Send test
+          </button>
+        </div>
+      </section>
+
+      <section class="request-workbench" aria-labelledby="requestsHeading">
+        <div class="section-heading">
+          <div>
+            <h2 id="requestsHeading">Live values</h2>
+            <p>Open a request to inspect its trend and act on it.</p>
+          </div>
+        </div>
+
+        <div class="request-list" id="requestCard" aria-busy="true">
+          <section class="empty-state" id="emptyState">
+            <div class="empty-state-copy">
+              <h2>Your useful numbers, in one place.</h2>
+              <p>
+                Add an API or crypto value, then keep an eye on it here and in
+                your widgets.
+              </p>
+            </div>
+            <button type="button" class="btn btn-primary" id="emptyAddRequest">
+              Add your first request
+            </button>
+          </section>
+        </div>
+      </section>
+
+      <section
+        class="preset-shelf"
+        id="presetShelf"
+        aria-labelledby="presetHeading"
+      >
+        <div class="section-heading">
+          <div>
+            <h2 id="presetHeading">Quick start</h2>
+            <p>Choose a starting point, check the details, then save it.</p>
+          </div>
+          <button type="button" class="btn" id="customRequest">
+            Custom request
+          </button>
+        </div>
+        <div class="preset-choices" id="presetChoices" role="list"></div>
+        <p
+          class="preset-status status"
+          id="presetStatus"
+          role="status"
+          aria-live="polite"
+        >
+          Loading presets…
+        </p>
+      </section>
+
+      <details class="diagnostics disclosure" id="activity">
+        <summary>Diagnostics</summary>
+        <div class="diagnostics-content">
+          <h2>Recent activity</h2>
+          <pre class="log" id="logView">Loading…</pre>
+        </div>
+      </details>
+
+      <p class="footnote" id="footnote"></p>
+    </main>
+    <script src="reliability.js"></script>
+    <script src="notifications.js"></script>
+    <script src="list.renderer.js"></script>
+  </body>
+</html>

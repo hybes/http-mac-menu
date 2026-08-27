@@ -1,0 +1,66 @@
+[package]
+name = "http-widgets"
+version = "2.0.0"
+description = "Little live values from any API, pinned to your surfaces"
+authors = ["Connect Dorset"]
+license = "ISC"
+edition = "2021"
+
+[lib]
+name = "http_widgets_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["time", "macros", "sync"] }
+reqwest = { version = "0.12", default-features = false, features = [
+  "rustls-tls",
+  "json",
+  "gzip",
+] }
+regex = "1"
+chrono = "0.4"
+
+# The system accent colour, read the way the 1.x build read it.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+  "std",
+  "NSColor",
+  "NSColorSpace",
+] }
+
+# Launching at login and the second-launch handoff are desktop ideas; a phone
+# has neither, and shipping the crates would only grow the binary.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-autostart = "2"
+tauri-plugin-single-instance = "2"
+
+# Only used to correct tao 0.35's scene configuration method; see
+# src/ios_scene.rs. Same version tao itself pulls in.
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = [
+  "std",
+  "NSString",
+] }
+objc2-ui-kit = { version = "0.3", default-features = false, features = [
+  "std",
+  "UIApplication",
+  "UIGestureRecognizer",
+  "UIPinchGestureRecognizer",
+  "UIScrollView",
+] }
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- A menu bar extra, not an application: no Dock icon and no menu bar of
+	     its own. Set here rather than with setActivationPolicy at runtime,
+	     which only takes effect once the app is already up — long enough to
+	     flash a Dock icon, and on this build long enough to keep the menu bar. -->
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Connect to HTTP endpoints you configure on your local network and, during development, to the development server.</string>
+</dict>
+</plist>

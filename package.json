@@ -1,79 +1,41 @@
 {
-  "name": "cnnct-http-mac-menu",
-  "productName": "HTTP Mac Menu",
-  "version": "1.8.3",
-  "description": "Show HTTP responses or crypto holdings in the macOS menu bar.",
-  "main": "index.js",
+  "name": "http-widgets",
+  "productName": "HTTP Widgets",
+  "version": "2.0.0",
+  "description": "Little live values from any API, pinned to your surfaces",
+  "private": true,
   "scripts": {
-    "build:css": "tailwindcss -i styles.css -o output.css --minify",
-    "start": "npm run build:css && electron .",
-    "dev": "npm run build:css && NODE_ENV=development electron .",
-    "pack": "npm run build:css && electron-builder --dir",
-    "dist": "npm run build:css && electron-builder",
-    "install:local": "bash tools/install-local.sh",
+    "build:css": "tailwindcss -i styles.css -o ui/output.css --minify",
+    "check:css": "node scripts/check-css.mjs",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "test": "npm run test:ui && npm run test:rust",
+    "test:ui": "node --check ui/api.js && node --check ui/config.renderer.js && node --check ui/list.renderer.js && node --check ui/notifications.js && node --test tests/ui-contract.test.mjs",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "format:check": "prettier --check package.json README.md design.md tokens.css styles.css scripts tests ui .hallmark .github/workflows",
+    "check": "npm run format:check && npm run check:css && npm test",
     "format": "prettier --write .",
-    "postinstall": "electron-builder install-app-deps",
-    "publish": "node publish.js"
+    "tauri": "tauri"
   },
   "keywords": [
-    "electron",
+    "tauri",
     "menubar",
     "tray",
+    "widget",
     "http",
-    "crypto",
-    "macos"
+    "crypto"
   ],
   "author": "Connect Dorset",
   "license": "ISC",
-  "devDependencies": {
-    "@tailwindcss/cli": "^4.3.3",
-    "electron": "^43.4.1",
-    "electron-builder": "^26.15.3",
-    "prettier": "^3.9.6",
-    "prettier-plugin-tailwindcss": "^0.8.1",
-    "tailwindcss": "^4.3.3"
-  },
   "repository": {
     "type": "git",
     "url": "https://github.com/hybes/http-mac-menu.git"
   },
-  "dependencies": {
-    "@sentry/electron": "^7.17.0",
-    "axios": "^1.19.0",
-    "electron-settings": "^4.0.4"
-  },
-  "build": {
-    "appId": "cnnct.crypto-tracker",
-    "productName": "HTTP Mac Menu",
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "hybes",
-        "repo": "http-mac-menu",
-        "releaseType": "release"
-      }
-    ],
-    "files": [
-      "index.js",
-      "lib/**/*",
-      "scripts/**/*",
-      "views/**/*",
-      "assets/**/*",
-      "output.css",
-      "package.json"
-    ],
-    "mac": {
-      "icon": "./build/macIcon.icns",
-      "category": "public.app-category.utilities",
-      "target": [
-        {
-          "target": "default",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        }
-      ]
-    }
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.3",
+    "@tauri-apps/cli": "^2.11.4",
+    "prettier": "^3.9.6",
+    "prettier-plugin-tailwindcss": "^0.8.1",
+    "tailwindcss": "^4.3.3"
   }
 }

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/capabilities.json",
+  "identifier": "default",
+  "description": "HTTP Widgets default capability",
+  "windows": ["config", "main"],
+  "permissions": ["core:default"]
+}

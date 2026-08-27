@@ -1,0 +1,5 @@
+# Generated: Tailwind's build, and the Xcode/Gradle projects Tauri writes.
+ui/output.css
+src-tauri/gen/
+src-tauri/target/
+dist/

@@ -1,0 +1,133 @@
+/* Hallmark · macrostructure: Workbench · tone: calm technical · anchor hue: cobalt
+ * variation: guided provider controls + platform-native scrolling · pre-emit critique: P5 H5 E5 S5 R5 V4
+ * design-system: design.md · designed-as-app · slop: pass · contrast: pass · mobile: pass
+ */
+:root {
+  color-scheme: light dark;
+
+  --color-paper: oklch(97.8% 0.006 250);
+  --color-paper-2: oklch(95.2% 0.009 250);
+  --color-paper-3: oklch(91.8% 0.013 250);
+  --color-surface: oklch(99.1% 0.003 250);
+  --color-surface-raised: oklch(100% 0.002 250);
+  --color-rule: oklch(87% 0.012 250);
+  --color-rule-2: oklch(73% 0.018 252);
+  --color-muted: oklch(47% 0.02 255);
+  --color-neutral: oklch(38% 0.022 256);
+  --color-ink-2: oklch(30% 0.025 258);
+  --color-ink: oklch(19% 0.027 258);
+  --color-accent: oklch(55% 0.2 256);
+  --color-accent-hover: oklch(50% 0.2 256);
+  --color-accent-soft: oklch(93% 0.035 256);
+  --color-accent-text: oklch(38% 0.15 256);
+  --color-data: oklch(48% 0.18 256);
+  --color-accent-high-ink: oklch(98.5% 0.006 250);
+  --color-accent-low-ink: oklch(8% 0.01 258);
+  --color-accent-ink: var(--color-accent-high-ink);
+  --color-focus: oklch(43% 0.19 256);
+  --color-success: oklch(43% 0.13 148);
+  --color-success-soft: oklch(94% 0.035 148);
+  --color-error: oklch(50% 0.2 27);
+  --color-error-soft: oklch(94% 0.035 27);
+  --color-warning: oklch(54% 0.13 75);
+  --color-graphite: oklch(21% 0.018 258);
+  --color-graphite-2: oklch(27% 0.02 258);
+  --color-graphite-ink: oklch(94% 0.008 250);
+  --color-selection: oklch(86% 0.055 256);
+
+  --font-display:
+    ui-rounded, 'SF Pro Rounded', -apple-system, BlinkMacSystemFont,
+    'Segoe UI Variable Display', system-ui, sans-serif;
+  --font-body:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI Variable Text',
+    system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
+
+  --font-weight-body: 400;
+  --font-weight-medium: 500;
+  --font-weight-heading: 700;
+  --tracking-display: -0.025em;
+  --tracking-label: 0.045em;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-md: 1.125rem;
+  --text-lg: 1.375rem;
+  --text-xl: 1.75rem;
+  --text-2xl: 2.25rem;
+  --text-display: clamp(2rem, 4vw + 0.5rem, 3rem);
+
+  --space-3xs: 0.25rem;
+  --space-2xs: 0.5rem;
+  --space-xs: 0.75rem;
+  --space-sm: 1rem;
+  --space-md: 1.5rem;
+  --space-lg: 2rem;
+  --space-xl: 2.5rem;
+  --space-2xl: 4rem;
+  --space-3xl: 6rem;
+  --space-4xl: 9rem;
+
+  --rule-hair: 1px;
+  --rule-fine: 2px;
+  --radius-card: 12px;
+  --radius-panel: 10px;
+  --radius-input: 8px;
+  --radius-pill: 999px;
+  --control-height: 44px;
+  --icon-button-size: 44px;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-micro: 120ms;
+  --dur-short: 220ms;
+  --dur-long: 420ms;
+
+  --shadow-card: 0 1px 2px oklch(19% 0.027 258 / 0.08);
+  --shadow-float: 0 12px 32px oklch(19% 0.027 258 / 0.16);
+
+  --z-base: 1;
+  --z-raised: 10;
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-modal: 400;
+  --z-toast: 500;
+  --z-tooltip: 600;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-paper: oklch(17% 0.018 258);
+    --color-paper-2: oklch(20.5% 0.02 258);
+    --color-paper-3: oklch(25% 0.022 258);
+    --color-surface: oklch(21.5% 0.02 258);
+    --color-surface-raised: oklch(25.5% 0.022 258);
+    --color-rule: oklch(30% 0.022 258);
+    --color-rule-2: oklch(44% 0.025 258);
+    --color-muted: oklch(72% 0.018 250);
+    --color-neutral: oklch(80% 0.014 250);
+    --color-ink-2: oklch(88% 0.01 250);
+    --color-ink: oklch(95% 0.006 250);
+    --color-accent: oklch(67% 0.18 256);
+    --color-accent-hover: oklch(72% 0.16 256);
+    --color-accent-soft: oklch(29% 0.055 256);
+    --color-accent-text: oklch(86% 0.09 256);
+    --color-data: oklch(74% 0.14 256);
+    --color-accent-ink: var(--color-accent-low-ink);
+    --color-focus: oklch(78% 0.13 256);
+    --color-success: oklch(72% 0.12 148);
+    --color-success-soft: oklch(27% 0.045 148);
+    --color-error: oklch(72% 0.16 27);
+    --color-error-soft: oklch(27% 0.05 27);
+    --color-warning: oklch(76% 0.12 75);
+    --color-graphite: oklch(13% 0.014 258);
+    --color-graphite-2: oklch(19% 0.018 258);
+    --color-graphite-ink: oklch(94% 0.008 250);
+    --color-selection: oklch(35% 0.07 256);
+    --font-weight-body: 350;
+    --shadow-card: 0 1px 2px oklch(5% 0.012 258 / 0.24);
+    --shadow-float: 0 12px 32px oklch(5% 0.012 258 / 0.38);
+  }
+}

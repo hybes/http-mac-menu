@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_title">HTTP Widgets</string>
+    <string name="widget_graph_description">Trend for %1$s</string>
+    <string name="widget_graph_description_generic">Trend graph</string>
+</resources>

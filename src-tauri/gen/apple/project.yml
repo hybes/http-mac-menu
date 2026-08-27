@@ -1,0 +1,177 @@
+name: http-widgets
+options:
+  bundleIdPrefix: com.hybes.http-widget
+  deploymentTarget:
+    iOS: "15.0"
+fileGroups: [../../src]
+configs:
+  debug: debug
+  release: release
+settingGroups:
+  app:
+    base:
+      PRODUCT_NAME: HTTP Widgets
+      PRODUCT_BUNDLE_IDENTIFIER: com.hybes.http-widget
+  signing:
+    base:
+      DEVELOPMENT_TEAM: BBU4YNR4U3
+      CODE_SIGN_STYLE: Automatic
+      CODE_SIGN_IDENTITY: Apple Development
+targetTemplates:
+  app:
+    type: application
+    sources:
+      - path: Sources
+    scheme:
+      environmentVariables:
+        RUST_BACKTRACE: full
+        RUST_LOG: info
+    settings:
+      groups: [app]
+targets:
+  http-widgets_iOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: Assets.xcassets
+      # Externals is deliberately not a source. It holds one libapp.a per
+      # configuration, and listing it both copied a static library into the
+      # bundle and, once a second configuration had been built, produced two
+      # copy commands for the same path. It is linked through the libapp.a
+      # dependency below and LIBRARY_SEARCH_PATHS instead.
+      - path: http-widgets_iOS
+      - path: assets
+        buildPhase: resources
+        type: folder
+      - path: LaunchScreen.storyboard
+    info:
+      path: http-widgets_iOS/Info.plist
+      properties:
+        LSRequiresIPhoneOS: true
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        NSLocalNetworkUsageDescription: Connect to HTTP endpoints you configure on your local network and, during development, to the development server.
+        # iOS 26 SDK onwards UIKit hard-fails at launch unless the app adopts
+        # the UIScene life cycle. tao only installs its scene delegate when
+        # this key is true, so it is the switch that keeps the app running.
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
+          # tao asks UIKit for a configuration called "TaoScene". Without this
+          # UIKit logs "Info.plist contained no UIScene configuration
+          # dictionary" and has nothing to resolve the delegate against.
+          UISceneConfigurations:
+            UIWindowSceneSessionRoleApplication:
+              - UISceneConfigurationName: TaoScene
+                UISceneDelegateClassName: TaoSceneDelegate
+        # Alerts are evaluated on device, so the engine has to run occasionally
+        # while the app is closed. See Sources/http-widgets/BackgroundRefresh.swift.
+        UIBackgroundModes:
+          - fetch
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.hybes.http-widget.refresh
+        UILaunchStoryboardName: LaunchScreen
+        UIRequiredDeviceCapabilities: [arm64, metal]
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        CFBundleShortVersionString: 2.0.0
+        CFBundleVersion: "2.0.0"
+    entitlements:
+      path: http-widgets_iOS/http-widgets_iOS.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.hybes.http-widget]
+    scheme:
+      environmentVariables:
+        RUST_BACKTRACE: full
+        RUST_LOG: info
+    settings:
+      base:
+        ENABLE_BITCODE: false
+        ARCHS: [arm64]
+        VALID_ARCHS: arm64
+        LIBRARY_SEARCH_PATHS[arch=x86_64]: $(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)
+        LIBRARY_SEARCH_PATHS[arch=arm64]: $(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)
+        ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: true
+        EXCLUDED_ARCHS[sdk=iphoneos*]: x86_64
+      groups: [app, signing]
+    dependencies:
+      - target: HttpWidgetsWidget
+      - framework: libapp.a
+        embed: false
+      - sdk: CoreGraphics.framework
+      - sdk: Metal.framework
+      - sdk: MetalKit.framework
+      - sdk: QuartzCore.framework
+      - sdk: Security.framework
+      - sdk: UIKit.framework
+      - sdk: WebKit.framework
+    preBuildScripts:
+      - script: |
+          set -e
+          # Xcode.app is launched by LaunchServices, so this script starts with
+          # a bare PATH: no rustup, no node, no Tauri CLI. Homebrew's rustc has
+          # no iOS targets, so ~/.cargo/bin must come first or the build fails
+          # with "can't find crate for `core`".
+          export PATH="$HOME/.cargo/bin:$SRCROOT/../../../node_modules/.bin:$PATH"
+
+          # The Tauri CLI is a #!/usr/bin/env node script, and nvm keeps node
+          # where Xcode never looks. nvm's default alias is often "lts/*"
+          # rather than a version, so take the newest install instead.
+          if ! command -v node >/dev/null 2>&1; then
+            for dir in \
+              "$(ls -1d "${NVM_DIR:-$HOME/.nvm}"/versions/node/*/bin 2>/dev/null | sort -V | tail -1)" \
+              /opt/homebrew/bin \
+              /usr/local/bin; do
+              if [ -n "$dir" ] && [ -x "$dir/node" ]; then
+                export PATH="$dir:$PATH"
+                break
+              fi
+            done
+          fi
+
+          command -v node >/dev/null 2>&1 || { echo "error: node not found — the Tauri CLI needs it; install node or add it to PATH"; exit 1; }
+          command -v tauri >/dev/null 2>&1 || { echo "error: tauri CLI not found — run 'npm install' in the repo root"; exit 1; }
+          command -v cargo >/dev/null 2>&1 || { echo "error: cargo not found — install rustup plus the iOS targets"; exit 1; }
+          tauri ios xcode-script -v --platform ${PLATFORM_DISPLAY_NAME:?} --sdk-root ${SDKROOT:?} --framework-search-paths "${FRAMEWORK_SEARCH_PATHS:?}" --header-search-paths "${HEADER_SEARCH_PATHS:?}" --gcc-preprocessor-definitions "${GCC_PREPROCESSOR_DEFINITIONS:-}" --configuration ${CONFIGURATION:?} ${FORCE_COLOR} ${ARCHS:?}
+        name: Build Rust Code
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - $(SRCROOT)/Externals/x86_64/${CONFIGURATION}/libapp.a
+          - $(SRCROOT)/Externals/arm64/${CONFIGURATION}/libapp.a
+  HttpWidgetsWidget:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: ../../ios-widget/Swift
+    info:
+      path: ../../ios-widget/Info.plist
+      properties:
+        CFBundleDisplayName: HTTP Widgets
+        CFBundleShortVersionString: 2.0.0
+        CFBundleVersion: "2.0.0"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: ../../ios-widget/HttpWidgetsWidget.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.hybes.http-widget]
+    settings:
+      base:
+        PRODUCT_NAME: HttpWidgetsWidget
+        PRODUCT_BUNDLE_IDENTIFIER: com.hybes.http-widget.widget
+        MARKETING_VERSION: "2.0.0"
+        CURRENT_PROJECT_VERSION: "2.0.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SKIP_INSTALL: true
+        ENABLE_BITCODE: false
+        ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: false
+        ARCHS: [arm64]
+      groups: [signing]
