@@ -6,22 +6,21 @@
     <title>HTTP Widgets UI preview</title>
   </head>
   <body>
+    <!--
+      The app in a browser, with tests/mock-tauri.js standing in for Rust.
+      Serve the repository root (python3 -m http.server 4173) and open
+      /tests/ui-preview.html, optionally with ?platform=ios and a route such
+      as #/new or #/v/r1. See mock-tauri.js for the other switches.
+    -->
     <script type="module">
-      const params = new URLSearchParams(window.location.search);
-      const file =
-        params.get('page') === 'editor' ? 'config.html' : 'index.html';
-      const response = await fetch(`/ui/${file}`, { cache: 'no-store' });
-      let html = await response.text();
-      html = html
+      const response = await fetch('/ui/index.html', { cache: 'no-store' });
+      const html = (await response.text())
         .replace('href="output.css"', 'href="/ui/output.css"')
         .replace(
           '<script src="api.js">',
-          '<script src="/tests/mock-tauri.js"><\/script><script src="/ui/api.js">'
+          '<script src="/tests/mock-tauri.js"><\/script><script src="api.js">'
         )
-        .replaceAll('src="reliability.js"', 'src="/ui/reliability.js"')
-        .replaceAll('src="notifications.js"', 'src="/ui/notifications.js"')
-        .replaceAll('src="list.renderer.js"', 'src="/ui/list.renderer.js"')
-        .replaceAll('src="config.renderer.js"', 'src="/ui/config.renderer.js"');
+        .replaceAll(/src="([\w.-]+\.js)"/g, 'src="/ui/$1"');
       document.open();
       document.write(html);
       document.close();

@@ -1701,6 +1701,7 @@ dependencies = [
 name = "http-widgets"
 version = "2.0.2"
 dependencies = [
+ "block2",
  "chrono",
  "objc2",
  "objc2-app-kit",

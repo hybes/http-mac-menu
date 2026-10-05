@@ -15,7 +15,7 @@ use super::crypto_route::{
     known_solana_token_by_mint, solana_mint_hint,
 };
 use super::format::{
-    cap_display_value, format_gain, format_http_value, format_money, format_percent,
+    cap_display_value, format_gain, format_http_response, format_money, format_percent,
     parse_decimals, render_template, resolve_json_path, to_number,
 };
 use super::model::Request;
@@ -117,7 +117,7 @@ async fn read_http_body(mut response: reqwest::Response, local: bool) -> Result<
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-pub async fn fetch_http_value(client: &reqwest::Client, cfg: &Request) -> Result<Fetched, String> {
+pub async fn fetch_http_response(client: &reqwest::Client, cfg: &Request) -> Result<Value, String> {
     let url = cfg.url.trim().to_string();
     if url.is_empty() {
         return Err("No URL configured".into());
@@ -139,24 +139,20 @@ pub async fn fetch_http_value(client: &reqwest::Client, cfg: &Request) -> Result
     }
     let body = read_http_body(res, local).await?;
 
-    let mut raw: Value;
-    let trimmed = body.trim_start();
-    if trimmed.starts_with('{') || trimmed.starts_with('[') {
-        raw = serde_json::from_str::<Value>(&body).unwrap_or(Value::String(body.clone()));
-    } else {
-        raw = Value::String(body.clone());
+    match serde_json::from_str::<Value>(&body) {
+        Ok(value) => Ok(value),
+        Err(_) if !cfg.json.is_empty() || !cfg.display_rules.is_empty() => Err(
+            "Response is not valid JSON. Clear the JSON path and conditions to use plain text."
+                .into(),
+        ),
+        Err(_) => Ok(Value::String(body)),
     }
+}
 
-    let json_path = cfg.json.trim();
-    if !json_path.is_empty() {
-        raw = resolve_json_path(&raw, json_path)?.clone();
-    }
-    if raw.is_null() {
-        return Err("Response value is empty".into());
-    }
-
-    let text = format_http_value(&raw, cfg);
-    let numeric = to_number(&raw).map(|value| {
+pub fn http_value_from_response(data: &Value, cfg: &Request) -> Result<Fetched, String> {
+    let text = format_http_response(data, cfg, chrono::Utc::now().timestamp())?;
+    let raw = resolve_json_path(data, cfg.json.trim()).ok();
+    let numeric = raw.and_then(to_number).map(|value| {
         to_number(&Value::String(cfg.multiplier.clone()))
             .map(|multiplier| value * multiplier)
             .unwrap_or(value)
@@ -166,9 +162,15 @@ pub async fn fetch_http_value(client: &reqwest::Client, cfg: &Request) -> Result
         alert_numeric: numeric,
         alert_text: text.clone(),
         text,
-        raw_log: truncate_msg(&raw.to_string(), 500),
+        raw_log: truncate_msg(&raw.unwrap_or(&Value::Null).to_string(), 500),
         pct_24h: None,
     })
+}
+
+pub async fn fetch_http_value(client: &reqwest::Client, cfg: &Request) -> Result<Fetched, String> {
+    cfg.validate_for_save()?;
+    let data = fetch_http_response(client, cfg).await?;
+    http_value_from_response(&data, cfg)
 }
 
 // ---------------------------------------------------------------------------

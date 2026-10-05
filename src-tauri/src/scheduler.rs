@@ -11,7 +11,7 @@ use tokio::task::JoinSet;
 
 use crate::state::{AppState, ReqStatus};
 
-const MAX_LOG_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_LOG_BYTES: u64 = 1024 * 1024;
 
 /// Owns one request generation's in-flight slot. Cancellation, stale replies
 /// and ordinary completion all run `Drop`, so no path can strand the slot.
@@ -340,7 +340,7 @@ async fn refresh_request_with_batch(app: &AppHandle, id: &str, jupiter_batch: &[
             if alert_state_changed {
                 state.mark_rule_states_changed();
             }
-            {
+            let previous = {
                 let mut status = state.status.lock().unwrap();
                 status.insert(
                     id.to_string(),
@@ -352,19 +352,28 @@ async fn refresh_request_with_batch(app: &AppHandle, id: &str, jupiter_batch: &[
                         updated_at: observed_at,
                         failures: 0,
                     },
-                );
-            }
+                )
+            };
             if history_changed {
                 persist_pending_history(app, &state, true).await;
             }
-            log_line(
-                app,
-                &format!(
-                    "Success ({name}): showing \"{}\" from {}",
-                    crate::engine::indicators::to_text(&f.text),
-                    f.raw_log
-                ),
-            );
+            // The log answers "when did it change", not "what was it every
+            // poll": only the first success and recoveries get a line, and
+            // steady-state refreshes stay silent.
+            let first_or_recovered = previous
+                .as_ref()
+                .map(|p| p.error.is_some() || p.value.is_none())
+                .unwrap_or(true);
+            if first_or_recovered {
+                log_line(
+                    app,
+                    &format!(
+                        "Success ({name}): showing \"{}\" from {}",
+                        crate::engine::indicators::to_text(&f.text),
+                        f.raw_log
+                    ),
+                );
+            }
             for rule_id in fired_rules {
                 let delivered = fire_alert(app, &request, &rule_id, &f, &name).is_ok();
                 let changed = {
@@ -382,14 +391,20 @@ async fn refresh_request_with_batch(app: &AppHandle, id: &str, jupiter_batch: &[
             }
         }
         Err(message) => {
-            {
+            // A repeat of the same failure adds nothing; only a new message
+            // (including the first) earns a line.
+            let changed = {
                 let mut status = state.status.lock().unwrap();
                 let entry = status.entry(id.to_string()).or_default();
+                let changed = entry.error.as_deref() != Some(message.as_str());
                 entry.error = Some(message.clone());
                 entry.attempted_at = attempted_at;
                 entry.failures += 1;
+                changed
+            };
+            if changed {
+                log_line(app, &format!("Error ({name}): {message}"));
             }
-            log_line(app, &format!("Error ({name}): {message}"));
         }
     }
 

@@ -30,12 +30,16 @@ reqwest = { version = "0.12", default-features = false, features = [
 regex = "1"
 chrono = "0.4"
 
-# The system accent colour, read the way the 1.x build read it.
+# The system accent colour, read the way the 1.x build read it — plus the
+# local key monitor that catches Escape before WKWebView swallows it.
 [target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = [
   "std",
   "NSColor",
   "NSColorSpace",
+  "NSEvent",
+  "block2",
 ] }
 
 # Launching at login and the second-launch handoff are desktop ideas; a phone

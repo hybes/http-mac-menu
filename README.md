@@ -9,42 +9,114 @@ run on your device.
 
 ## Using the app
 
-- Pick a **Quick start** preset or add a custom request. Presets still open the
-  editor before anything is saved, so you can check the source and wording.
-- Open any live-value card for its larger graph, minimum/maximum/change and
-  last-updated details. Copy, refresh, duplicate and edit are available there.
-- The editor keeps the common choices clickable: currencies, refresh intervals,
-  crypto template values and alert cooldowns. Headers, cURL import and detailed
-  HTTP formatting stay under **Advanced HTTP** until they are needed.
-- Notification controls appear beside alert rules and on the home screen only
-  when they need attention. Use **Send test** to verify the installed app.
+The app is built around the thing it makes: a short piece of text on your menu
+bar or widget. Every screen shows that text as it reads now.
 
-On desktop, closing the settings window, pressing Escape or using Command-W
-hides the window and leaves HTTP Widgets running in the tray/menu bar. Quit from
-the tray menu when you want to stop the engine.
+- **Home** lists your values with their trend and state. On macOS the strip at
+  the top is your menu bar as it stands. Problems, a paused engine and missing
+  notification permission appear here only when they apply.
+- **Open a value** for its larger reading, the last 24 hours as a graph you can
+  scrub, and how it is made. Copy, refresh, duplicate and remove live here.
+  Each line of the setup opens the builder at that step.
+- **Add a value** from what you have in hand: paste an address or a cURL
+  command, pick a coin, or start from an example. The app fetches straight
+  away, so the first thing you see is a real result.
+- **The builder** is a short path: source, value, display, refresh, alerts.
+  Each step states its current answer on one line and opens only when you want
+  to change it. The preview above the steps is your menu bar or widget with the
+  value in place, formatted by the same Rust code that runs the scheduled
+  refreshes.
+- **Settings** holds what belongs to the app rather than one value: the rise
+  and fall marks, the left-click link, launch at login, pausing, notifications
+  and recent activity.
 
-Settings has a Menu bar option to make a plain left click on the tray open a
+On desktop, closing the window, pressing Escape or using Command-W hides it and
+leaves HTTP Widgets running in the tray/menu bar. Quit from the tray menu when
+you want to stop the engine. Choosing a value in the tray menu opens it in the
+window; **Open HTTP Widgets** opens home.
+
+**Left click opens**, in Settings, makes a plain left click on the tray open a
 link of your choosing (a dashboard, an exchange, anything http(s)); the menu
 then moves to right click. Linux tray items only support menus, so the menu
 stays on both buttons there.
 
-## Requests
+## Values
 
-Each widget is a small request whose result is shown as text:
+Each value is a small request whose result is shown as text:
 
-- **HTTP request** — any URL, optional headers (`Name: value` per line), a JSON
-  path like `data.price`, a multiplier, decimals/max-length, prefix/suffix.
-  **Paste a cURL command** to fill URL + headers for you.
-- **Crypto** — automatic, Jupiter, DEX Screener or CoinGecko pricing; tickers,
-  CoinGecko ids or Solana mints; optional holdings and a template with
+- **An API** — any URL, optional headers (`Name: value` per line), a field
+  chosen from the response, display text, conditions, null/missing fallback
+  text, a multiplier, decimals/max-length, text before and after.
+  **Paste a cURL command** to fill the address and headers for you.
+- **A crypto price** — automatic, Jupiter, DEX Screener or CoinGecko pricing;
+  tickers, CoinGecko ids or Solana mints; optional holdings and a layout with
   `{symbol} {price} {balance} {change1m…30d} {gain24h} {source}` etc.
-- **Presets** — one-click starting points (London weather, Tauri GitHub stars,
-  Hacker News points, live SOL, Bitcoin price and the GBP value of 1 ETH).
+- **Examples** — ready-made starting points (London weather, Tauri GitHub
+  stars, Hacker News points, live SOL, Bitcoin price and the GBP value of
+  1 ETH).
 
-Up to 10 requests sit side by side in the menu bar, refreshed on their own
+Up to 10 values sit side by side in the menu bar, refreshed on their own
 schedule (minimum 5 seconds for HTTP/Jupiter, 30 seconds for pool/CoinGecko
 sources) with automatic backoff when an endpoint fails, short first-run retries
 for local addresses, and a refresh shortly after your Mac wakes.
+
+### Choosing what an HTTP response displays
+
+The **Value** step draws the response as a tree; click the field you want and
+its current value appears in the preview. You can also type a path such as
+`data.price` or `items[0].value`; the picker uses JSON Pointer (`/data/a.b`)
+for keys containing punctuation. It lists up to 250 fields, including objects,
+arrays and nulls, with a filter once there are more than a few. Other paths
+can still be entered by hand.
+
+**Show it as**, in the Display step, covers the common shapes: as it comes, a
+date, a time, or the time until or since. **My own text** combines literal
+text with `{value}` (the selected value, including its number formatting) or
+any response field, such as `{data.status}: {data.count}`.
+**If the value is null or missing** supplies an alternative when that value is
+absent; zero, `false`, empty text and empty collections remain valid values.
+Fallback text supports the same placeholders.
+
+**Conditions** check any field in the response. They support null/missing,
+presence, equality, inequality, text contains, above/below a number, and
+dates before/after now. The first match wins; the arrow moves one up.
+Each condition has its own display text and can refer to other response
+fields. Conditions compare original response values, before any multiplier.
+Text comparisons are case-sensitive. Above/below also accept numeric strings;
+date comparisons and formatting use ISO 8601 timestamps.
+
+| Placeholder                   | Result                                                   |
+| ----------------------------- | -------------------------------------------------------- |
+| `{value}`                     | Selected value, using multiplier and decimals/max-length |
+| `{data.updated_at\|datetime}` | Date and time in the device's local timezone             |
+| `{data.updated_at\|date}`     | Local date                                               |
+| `{data.updated_at\|time}`     | Local time                                               |
+| `{data.updated_at\|relative}` | `in 2h 30m` or `1h 0m ago`                               |
+
+After a fetch, edits preview the cached response through the same Rust
+formatter used by scheduled refreshes. The refresh button on the preview
+fetches fresh data. Relative times update at the configured refresh interval.
+Text before and after wraps the final text. Graphs and numeric alerts continue
+to use the selected numeric field; display conditions only change the text.
+HTTP failures and invalid JSON still report errors, rather than showing the
+null fallback.
+
+For example, using data from [Codex Resets](https://codex-resets.com) and its
+[API documentation](https://codex-resets.com/api/docs): set the URL to
+`https://codex-resets.com/api/v1/status`, the value path to
+`data.scheduled_reset.scheduled_for`, and **If the value is null or missing**
+to `No reset scheduled`. Add these conditions in order:
+
+| Field                                | Condition     | Show                                                 |
+| ------------------------------------ | ------------- | ---------------------------------------------------- |
+| `data.scheduled_reset.scheduled_for` | Is before now | `Scheduled {value\|relative}; awaiting confirmation` |
+| `data.scheduled_reset.scheduled_for` | Has a value   | `Reset {value\|relative}`                            |
+| `data.scheduled_reset`               | Has a value   | `Reset scheduled; time TBC`                          |
+
+The API allows a scheduled reset with an unknown time, and a passed scheduled
+time does not confirm execution. These rules distinguish both cases from
+having no scheduled reset. They are ordinary editable conditions; no
+provider-specific logic runs in the engine.
 
 ## SOL and price sources
 
@@ -95,8 +167,9 @@ changes, so a new data source is never joined onto an old graph.
 
 ## Alerts
 
-Add rules to any request — _value above/below_, _gained/dropped ≥ N%_, _text
-contains_, _matches regex_ — each with its own cooldown. When a condition
+Add rules to any value — _goes above/below_, _gains/drops at least N%_,
+_contains_, _matches regex_ — each with its own limit on how often it may
+notify. When a condition
 becomes true you get a native notification. Everything is evaluated locally.
 Crypto value alerts always compare the coin's unit price, even when holdings or
 `{balance}` are shown; their notification also reports that price.
@@ -183,20 +256,37 @@ npm run check                   # formatting plus all tests
 The shared product is a Rust engine plus a static HTML/JavaScript UI.
 `src-tauri/src/engine/` fetches, formats, evaluates rules and maintains numeric
 history; `src-tauri/src/` owns persistence, notifications, the tray, windows
-and scheduler. `ui/` is deliberately framework-free and is styled by Tailwind
-from `styles.css` into the committed `ui/output.css`. Thin SwiftUI and Kotlin
+and scheduler. `ui/` is deliberately framework-free: one page, `index.html`,
+whose views (`view.home.js`, `view.value.js`, `view.add.js`, `view.builder.js`,
+`view.settings.js`) are swapped by the small router in `app.js` on the URL
+fragment. The native side opens `#/v/<id>` and `#/new`. Shared wording,
+validation and provider policy live in `reliability.js`, which the Node tests
+load directly. It is styled by Tailwind from `styles.css` into the committed
+`ui/output.css`. Thin SwiftUI and Kotlin
 adapters render OS-native widgets because WidgetKit and Android `RemoteViews`
 cannot be implemented by a Tauri webview. They consume the same versioned
 `widget-snapshot.json`; no business logic or external application server is
 duplicated there.
 
 The UI's shared colour, type, spacing, control and motion values live in
-`tokens.css`. Both pages consume the same
-compiled stylesheet and adapt through platform classes rather than separate
-desktop and phone interfaces.
+`tokens.css`. The app and the About window consume the same compiled
+stylesheet and adapt through platform classes rather than separate desktop and
+phone interfaces.
 
 There is no bundler and no frontend framework — `tauri.conf.json` points
 `frontendDist` straight at `ui/`.
+
+To work on the interface without building the app, serve the repository root
+and open the preview, which runs the real page against a stand-in backend
+(`tests/mock-tauri.js`) that keeps state, so every flow can be clicked through:
+
+```
+python3 -m http.server 4173
+open "http://localhost:4173/tests/ui-preview.html?platform=macos"
+```
+
+`?platform=ios` draws the phone layout, `?empty=1` starts with no values, and
+any route can follow, such as `#/new` or `#/v/r1/edit/display`.
 
 ### iOS
 

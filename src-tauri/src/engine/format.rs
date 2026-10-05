@@ -78,6 +78,12 @@ pub fn resolve_json_path<'a>(
     data: &'a serde_json::Value,
     path: &str,
 ) -> Result<&'a serde_json::Value, String> {
+    // JSON Pointer covers keys containing dots, brackets, slashes or spaces.
+    if path.starts_with('/') {
+        return data
+            .pointer(path)
+            .ok_or_else(|| format!("JSON path \"{path}\" not found in response"));
+    }
     let cleaned = {
         // Turn items[0].value into items.0.value
         let mut s = String::new();
@@ -222,12 +228,12 @@ pub fn direction_mark(value: f64) -> char {
 
 /// Port of formatHttpValue: numbers honour multiplier/decimals, everything
 /// else is shown as-is with "decimals" acting as a maximum length.
-pub fn format_http_value(raw: &serde_json::Value, cfg: &super::model::Request) -> String {
+fn format_http_value(raw: &serde_json::Value, cfg: &super::model::Request) -> String {
     let multiplier = to_number(&serde_json::Value::String(cfg.multiplier.clone()));
     let decimals = parse_decimals(&cfg.length);
     let numeric = to_number(raw);
 
-    let text = if let Some(n) = numeric.filter(|_| multiplier.is_some() || decimals.is_some()) {
+    if let Some(n) = numeric.filter(|_| multiplier.is_some() || decimals.is_some()) {
         match multiplier {
             Some(m) => {
                 // A multiplier also switches on locale formatting (12000 -> 12,000).
@@ -251,9 +257,170 @@ pub fn format_http_value(raw: &serde_json::Value, cfg: &super::model::Request) -
             Some(d) if d > 0 => raw_text.chars().take(d as usize).collect(),
             _ => raw_text,
         }
-    };
+    }
+}
 
-    cap_display_value(format!("{}{}{}", cfg.prefix, text, cfg.suffix))
+fn json_text(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text.clone(),
+        value => value.to_string(),
+    }
+}
+
+fn display_rule_matches(
+    rule: &super::model::DisplayRule,
+    data: &serde_json::Value,
+    now: i64,
+) -> bool {
+    let value = resolve_json_path(data, rule.path.trim())
+        .ok()
+        .filter(|value| !value.is_null());
+    match rule.kind.as_str() {
+        "empty" => value.is_none(),
+        "present" => value.is_some(),
+        "equals" => value.is_some_and(|value| json_text(value) == rule.value),
+        "not_equals" => value.is_some_and(|value| json_text(value) != rule.value),
+        "before_now" | "after_now" => value
+            .and_then(serde_json::Value::as_str)
+            .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
+            .is_some_and(|date| {
+                if rule.kind == "before_now" {
+                    date.timestamp() < now
+                } else {
+                    date.timestamp() > now
+                }
+            }),
+        "contains" => value
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|text| text.contains(&rule.value)),
+        "above" | "below" => value
+            .and_then(to_number)
+            .zip(to_number(&serde_json::Value::String(rule.value.clone())))
+            .is_some_and(|(value, threshold)| {
+                if rule.kind == "above" {
+                    value > threshold
+                } else {
+                    value < threshold
+                }
+            }),
+        _ => false,
+    }
+}
+
+fn format_http_date(value: &serde_json::Value, format: &str, now: i64) -> Result<String, String> {
+    let date = value
+        .as_str()
+        .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
+        .ok_or_else(|| {
+            "Date formatting needs an ISO 8601 timestamp, such as 2026-10-05T12:00:00Z.".to_string()
+        })?;
+    if format == "relative" {
+        let seconds = date.timestamp().saturating_sub(now);
+        if seconds == 0 {
+            return Ok("now".into());
+        }
+        let minutes = seconds.unsigned_abs() / 60;
+        let duration = if minutes >= 1440 {
+            format!("{}d {}h", minutes / 1440, minutes % 1440 / 60)
+        } else if minutes >= 60 {
+            format!("{}h {}m", minutes / 60, minutes % 60)
+        } else if minutes > 0 {
+            format!("{minutes}m")
+        } else {
+            "<1m".into()
+        };
+        return Ok(if seconds > 0 {
+            format!("in {duration}")
+        } else {
+            format!("{duration} ago")
+        });
+    }
+    let pattern = match format {
+        "date" => "%d %b %Y",
+        "time" => "%H:%M",
+        "datetime" => "%d %b %Y, %H:%M",
+        _ => {
+            return Err(format!(
+                "Unknown display format \"{format}\". Use date, time, datetime or relative."
+            ))
+        }
+    };
+    Ok(date
+        .with_timezone(&chrono::Local)
+        .format(pattern)
+        .to_string())
+}
+
+fn render_http_template(
+    template: &str,
+    data: &serde_json::Value,
+    cfg: &super::model::Request,
+    now: i64,
+) -> Result<String, String> {
+    let mut out = String::new();
+    let mut rest = template;
+    while let Some(start) = rest.find('{') {
+        out.push_str(&rest[..start]);
+        let end = rest[start..]
+            .find('}')
+            .map(|end| start + end)
+            .ok_or_else(|| "Close each display placeholder with }.".to_string())?;
+        let token = &rest[start + 1..end];
+        let (path, format) = token.split_once('|').unwrap_or((token, ""));
+        let path = path.trim();
+        if path.is_empty() {
+            return Err("A display placeholder needs a JSON path or value.".into());
+        }
+        let value = resolve_json_path(data, if path == "value" { &cfg.json } else { path })?;
+        if value.is_null() {
+            return Err(format!(
+                "Display field \"{path}\" is null. Add a null condition or fallback text."
+            ));
+        }
+        let text = if !format.trim().is_empty() {
+            format_http_date(value, format.trim(), now)?
+        } else if path == "value" {
+            format_http_value(value, cfg)
+        } else {
+            json_text(value)
+        };
+        out.push_str(&text);
+        rest = &rest[end + 1..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
+/// The editor preview and every scheduled HTTP refresh share this formatter.
+/// Conditions see the whole response, even when the selected field is absent.
+pub fn format_http_response(
+    data: &serde_json::Value,
+    cfg: &super::model::Request,
+    now: i64,
+) -> Result<String, String> {
+    let selected = resolve_json_path(data, cfg.json.trim());
+    let text = if let Some(rule) = cfg
+        .display_rules
+        .iter()
+        .find(|rule| display_rule_matches(rule, data, now))
+    {
+        render_http_template(&rule.template, data, cfg, now)?
+    } else if selected.as_ref().map_or(true, |value| value.is_null()) && !cfg.empty_text.is_empty()
+    {
+        render_http_template(&cfg.empty_text, data, cfg, now)?
+    } else if !cfg.http_template.is_empty() {
+        render_http_template(&cfg.http_template, data, cfg, now)?
+    } else {
+        let value = selected?;
+        if value.is_null() {
+            return Err("Response value is null. Set text for null or missing values.".into());
+        }
+        format_http_value(value, cfg)
+    };
+    Ok(cap_display_value(format!(
+        "{}{}{}",
+        cfg.prefix, text, cfg.suffix
+    )))
 }
 
 pub fn format_percent(pct: Option<f64>) -> String {
@@ -327,6 +494,206 @@ mod tests {
     use crate::engine::constants::{
         MAX_DISPLAY_VALUE_CHARS, MAX_REFRESH_SECONDS, MIN_REFRESH_CRYPTO, MIN_REFRESH_HTTP,
     };
+    use crate::engine::model::{normalize_requests, request_from_clean, sanitize_values};
+    use serde_json::json;
+
+    #[test]
+    fn http_fallbacks_distinguish_null_and_missing_from_false_zero_and_blank() {
+        let cfg = request_from_clean(
+            "test",
+            &sanitize_values(&json!({
+                "json": "data.value", "empty_text": "Not available", "length": "2", "prefix": "[", "suffix": "]"
+            })),
+        );
+        for data in [
+            json!({"data": {"value": null}}),
+            json!({"data": {}}),
+            json!({"data": null}),
+        ] {
+            assert_eq!(
+                super::format_http_response(&data, &cfg, 0).unwrap(),
+                "[Not available]"
+            );
+        }
+        assert_eq!(
+            super::format_http_response(&json!({"data": {"value": 0}}), &cfg, 0).unwrap(),
+            "[0.00]"
+        );
+        let mut plain = cfg.clone();
+        plain.length.clear();
+        for (value, text) in [
+            (json!(false), "[false]"),
+            (json!(""), "[]"),
+            (json!("null"), "[null]"),
+        ] {
+            assert_eq!(
+                super::format_http_response(&json!({"data": {"value": value}}), &plain, 0).unwrap(),
+                text
+            );
+        }
+        plain.empty_text.clear();
+        assert!(super::format_http_response(&json!({"data": {"value": null}}), &plain, 0).is_err());
+        assert!(super::format_http_response(&json!({"data": {}}), &plain, 0).is_err());
+    }
+
+    #[test]
+    fn http_conditions_are_ordered_and_survive_settings_round_trips() {
+        let cfg = json!({
+            "id": "r1", "type": "http", "json": "items[0].count", "multiplier": "2", "length": "1",
+            "http_template": "{value} items · {data.status}", "empty_text": "No data",
+            "display_rules": [
+                {"path": "data.status", "kind": "equals", "value": "offline", "template": "Offline"},
+                {"path": "items[0].count", "kind": "above", "value": "10", "template": "Busy: {value}"}
+            ]
+        });
+        let request = request_from_clean("r1", &sanitize_values(&cfg));
+        request.validate_for_save().unwrap();
+        let reloaded = normalize_requests(&json!([serde_json::to_value(&request).unwrap()]));
+        assert_eq!(reloaded[0].display_rules, request.display_rules);
+        assert_eq!(reloaded[0].http_template, request.http_template);
+        assert_eq!(reloaded[0].empty_text, request.empty_text);
+        for (data, expected) in [
+            (
+                json!({"data": {"status": "offline"}, "items": [{"count": 12}]}),
+                "Offline",
+            ),
+            (
+                json!({"data": {"status": "online"}, "items": [{"count": 12}]}),
+                "Busy: 24.0",
+            ),
+            (
+                json!({"data": {"status": "online"}, "items": [{"count": 3}]}),
+                "6.0 items · online",
+            ),
+            (json!({"data": {"status": "offline"}}), "Offline"),
+        ] {
+            assert_eq!(
+                super::format_http_response(&data, &reloaded[0], 0).unwrap(),
+                expected
+            );
+        }
+        let mut invalid = request.clone();
+        invalid.display_rules[1].value = "NaN".into();
+        assert!(invalid.validate_for_save().is_err());
+        invalid.display_rules[1].kind = "run_script".into();
+        assert!(invalid.validate_for_save().is_err());
+        assert!(
+            crate::engine::model::parse_display_rules(Some(&json!([{"path": "data"}]))).is_err()
+        );
+    }
+
+    #[test]
+    fn display_conditions_cover_presence_text_numbers_and_dates() {
+        let data = json!({"null": null, "zero": 0, "bool": false, "text": "All systems ready", "number": "12.5", "time": "2026-10-05T12:00:00Z"});
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-05T10:00:00Z")
+            .unwrap()
+            .timestamp();
+        for (path, kind, value, expected) in [
+            ("null", "empty", "", true),
+            ("missing", "empty", "", true),
+            ("zero", "empty", "", false),
+            ("bool", "present", "", true),
+            ("text", "contains", "systems", true),
+            ("text", "contains", "SYSTEMS", false),
+            ("bool", "equals", "false", true),
+            ("number", "not_equals", "0", true),
+            ("missing", "not_equals", "0", false),
+            ("number", "above", "12", true),
+            ("number", "below", "13", true),
+            ("null", "below", "1", false),
+            ("time", "after_now", "", true),
+            ("time", "before_now", "", false),
+        ] {
+            let rule = crate::engine::model::DisplayRule {
+                path: path.into(),
+                kind: kind.into(),
+                value: value.into(),
+                template: "match".into(),
+            };
+            assert_eq!(
+                super::display_rule_matches(&rule, &data, now),
+                expected,
+                "{path} {kind}"
+            );
+        }
+    }
+
+    #[test]
+    fn scheduled_dates_handle_unknown_times_future_and_overdue_without_claiming_completion() {
+        let cfg = request_from_clean(
+            "reset",
+            &sanitize_values(&json!({
+                "json": "data.scheduled_reset.scheduled_for", "empty_text": "No reset scheduled",
+                "display_rules": [
+                    {"path": "data.scheduled_reset.scheduled_for", "kind": "before_now", "template": "Scheduled {value|relative}; awaiting confirmation"},
+                    {"path": "data.scheduled_reset.scheduled_for", "kind": "present", "template": "Reset {value|relative}"},
+                    {"path": "data.scheduled_reset", "kind": "present", "template": "Reset scheduled; time TBC"}
+                ]
+            })),
+        );
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-05T10:00:00Z")
+            .unwrap()
+            .timestamp();
+        for (scheduled, expected) in [
+            (json!(null), "No reset scheduled"),
+            (json!({"scheduled_for": null}), "Reset scheduled; time TBC"),
+            (
+                json!({"scheduled_for": "2026-10-05T12:30:00Z"}),
+                "Reset in 2h 30m",
+            ),
+            (
+                json!({"scheduled_for": "2026-10-05T09:00:00Z"}),
+                "Scheduled 1h 0m ago; awaiting confirmation",
+            ),
+        ] {
+            assert_eq!(
+                super::format_http_response(
+                    &json!({"data": {"scheduled_reset": scheduled}}),
+                    &cfg,
+                    now
+                )
+                .unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn templates_support_pointer_keys_and_report_bad_fields_dates_and_syntax() {
+        let data = json!({"a.b": {"x/y~": ["ok"]}, "when": "2026-10-05T12:30:00Z"});
+        let mut cfg = request_from_clean(
+            "test",
+            &sanitize_values(&json!({"http_template": "{/a.b/x~1y~0/0}"})),
+        );
+        assert_eq!(super::format_http_response(&data, &cfg, 0).unwrap(), "ok");
+        for template in [
+            "{missing}",
+            "{value|datetime}",
+            "{when|typo}",
+            "{when",
+            "{}",
+        ] {
+            cfg.http_template = template.into();
+            assert!(
+                super::format_http_response(&data, &cfg, 0).is_err(),
+                "{template}"
+            );
+        }
+        let date = chrono::DateTime::parse_from_rfc3339(data["when"].as_str().unwrap())
+            .unwrap()
+            .with_timezone(&chrono::Local);
+        for (filter, pattern) in [
+            ("date", "%d %b %Y"),
+            ("time", "%H:%M"),
+            ("datetime", "%d %b %Y, %H:%M"),
+        ] {
+            cfg.http_template = format!("{{when|{filter}}}");
+            assert_eq!(
+                super::format_http_response(&data, &cfg, 0).unwrap(),
+                date.format(pattern).to_string()
+            );
+        }
+    }
 
     #[test]
     fn refresh_intervals_are_bounded_before_becoming_durations() {

@@ -21,6 +21,9 @@ use std::time::Instant;
 #[cfg(desktop)]
 use tauri::menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+// Only the desktop window asks about unsaved edits natively; on phones the
+// page asks before it leaves a draft.
+#[cfg(desktop)]
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 #[cfg(desktop)]
 use tauri_plugin_opener::OpenerExt;
@@ -38,6 +41,15 @@ use crate::state::{AppState, ReqStatus};
 #[derive(Default)]
 pub struct TrayRenderCache {
     pub last_rendered: Mutex<Option<(String, String, String)>>,
+    /// The most recently built menu. In link mode it is not attached to the
+    /// tray at all — macOS pops an attached menu on left click before any
+    /// event handler can run — so right click shows this copy as a context
+    /// menu instead.
+    #[cfg(desktop)]
+    pub menu: Mutex<Option<tauri::menu::Menu<tauri::Wry>>>,
+    /// Whether the menu is currently detached from the tray (link mode), so
+    /// mode flips re-attach or detach exactly once.
+    pub menu_detached: Mutex<Option<bool>>,
     pub last_widget_snapshot: Mutex<Option<String>>,
 }
 
@@ -92,15 +104,7 @@ pub fn run() {
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
         // Second launch: bring the existing app to the front instead.
-        let id = {
-            let state = app.state::<AppState>();
-            let requests = state.requests.lock().unwrap();
-            requests
-                .first()
-                .map(|r| r.id.clone())
-                .unwrap_or_else(|| "new".into())
-        };
-        open_config(app, &id);
+        open_home(app);
     }));
 
     #[cfg(desktop)]
@@ -128,7 +132,6 @@ pub fn run() {
             commands::list_presets,
             commands::set_dirty,
             commands::close_config,
-            commands::fit_window,
             commands::accent_color,
             commands::refresh_all,
             commands::refresh_request_now,
@@ -144,6 +147,11 @@ pub fn run() {
             commands::close_about,
             commands::set_tray_link,
             commands::get_tray_link,
+            commands::get_preferences,
+            commands::set_indicator_style,
+            commands::set_launch_at_login,
+            commands::set_show_in_dock,
+            commands::confirm_discard,
             commands::app_info,
             commands::confirm_remove,
             commands::read_log,
@@ -253,12 +261,32 @@ pub fn run() {
                     .show_menu_on_left_click(!link_configured)
                     .on_tray_icon_event(|tray, event| {
                         if let tauri::tray::TrayIconEvent::Click {
-                            button: tauri::tray::MouseButton::Left,
-                            button_state: tauri::tray::MouseButtonState::Up,
+                            button,
+                            button_state,
                             ..
                         } = event
                         {
-                            open_tray_link(tray.app_handle());
+                            let app = tray.app_handle();
+                            // Clicks are rare and this line is the only way to
+                            // see whether macOS delivered one at all.
+                            scheduler::log_line(
+                                app,
+                                &format!("Tray click: {button:?} {button_state:?}"),
+                            );
+                            if matches!(button, tauri::tray::MouseButton::Left)
+                                && matches!(button_state, tauri::tray::MouseButtonState::Up)
+                            {
+                                open_tray_link(app);
+                            }
+                            // In link mode nothing native shows the detached
+                            // menu, and a menu can swallow the later mouse-up,
+                            // so the down event is the trigger.
+                            #[cfg(target_os = "macos")]
+                            if matches!(button, tauri::tray::MouseButton::Right)
+                                && matches!(button_state, tauri::tray::MouseButtonState::Down)
+                            {
+                                show_detached_tray_menu(app);
+                            }
                         }
                     });
                 if !cfg!(target_os = "macos") {
@@ -275,6 +303,7 @@ pub fn run() {
             {
                 apply_activation_policy(&handle);
                 install_app_menu(&handle)?;
+                install_escape_monitor(&handle);
             }
 
             render_tray(&handle);
@@ -292,7 +321,7 @@ pub fn run() {
             }
 
             // Desktop shows nothing at all until the menu bar has an entry, so
-            // a first run goes straight to the form. Phones have the list.
+            // a first run goes straight to adding one. Phones have the list.
             #[cfg(desktop)]
             {
                 let requests_empty = {
@@ -484,9 +513,12 @@ fn render_tray_desktop(app: &AppHandle) {
     let paused = state.is_paused();
     let views = snapshot_views(app);
     let login_enabled = autostart_enabled(app);
-    // Which button owns the menu follows the link preference live.
+    // With a link configured the menu must not be attached on macOS: AppKit
+    // pops an attached menu on left click at a level above the event
+    // handlers, so the click that should open the link never reaches us.
+    // Windows delivers events either way, so there the native flag suffices.
     let link_configured = state.tray_link.lock().unwrap().is_some();
-    let _ = tray.set_show_menu_on_left_click(!link_configured);
+    let detach_menu = cfg!(target_os = "macos") && link_configured;
     let indicator = state.indicator.lock().unwrap().clone();
     let status_map = {
         let status = state.status.lock().unwrap();
@@ -553,10 +585,32 @@ fn render_tray_desktop(app: &AppHandle) {
     if tooltip != last_tooltip.unwrap_or_default() {
         let _ = tray.set_tooltip(Some(&tooltip));
     }
-    if signature != last_menu.unwrap_or_default() {
+    let mode_changed = {
+        let mut detached = cache.menu_detached.lock().unwrap();
+        let changed = *detached != Some(detach_menu);
+        *detached = Some(detach_menu);
+        changed
+    };
+    if mode_changed || signature != last_menu.unwrap_or_default() {
         match build_tray_menu(app) {
             Ok(menu) => {
-                let _ = tray.set_menu(Some(menu));
+                if detach_menu {
+                    let _ = tray.set_menu(None::<tauri::menu::Menu<tauri::Wry>>);
+                } else {
+                    let _ = tray.set_menu(Some(menu.clone()));
+                }
+                *cache.menu.lock().unwrap() = Some(menu);
+                if mode_changed {
+                    let _ = tray.set_show_menu_on_left_click(!link_configured);
+                    scheduler::log_line(
+                        app,
+                        if detach_menu {
+                            "Left click opens the link; the menu is on right click"
+                        } else {
+                            "The menu is back on left click"
+                        },
+                    );
+                }
             }
             Err(e) => scheduler::log_line(app, &format!("Tray menu build failed: {e}")),
         }
@@ -586,7 +640,7 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wr
     let mut menu = MenuBuilder::new(app);
 
     if views.is_empty() {
-        let none = MenuItemBuilder::with_id("noop", "No requests yet")
+        let none = MenuItemBuilder::with_id("noop", "No values yet")
             .enabled(false)
             .build(app)?;
         menu = menu.item(&none);
@@ -597,10 +651,11 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wr
         }
     }
 
-    let add = MenuItemBuilder::with_id("add", "Add Request…")
+    let add = MenuItemBuilder::with_id("add", "Add Value…")
         .enabled(views.len() < constants::MAX_REQUESTS)
         .build(app)?;
-    menu = menu.item(&add).separator();
+    let home = MenuItemBuilder::with_id("home", "Open HTTP Widgets").build(app)?;
+    menu = menu.item(&add).item(&home).separator();
 
     let refresh = MenuItemBuilder::with_id("refresh", "Refresh Now").build(app)?;
     menu = menu.item(&refresh);
@@ -639,8 +694,9 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wr
     let pause_item = MenuItemBuilder::with_id(pause_id, pause_label)
         .enabled(!views.is_empty())
         .build(app)?;
-    menu = menu.item(&pause_item);
+    menu = menu.item(&pause_item).separator();
 
+    // Housekeeping lives one level down so the top level stays daily-use only.
     let indicator = state.indicator.lock().unwrap().clone();
     let mut styles = SubmenuBuilder::new(app, "Rise / Fall Icon");
     for (id, label) in crate::engine::indicators::STYLES {
@@ -654,23 +710,10 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wr
             }
         }
     }
-    menu = menu.item(&styles);
 
     let login = CheckMenuItemBuilder::with_id("login", "Launch at Login")
         .checked(autostart_enabled(app))
         .build(app)?;
-    menu = menu.item(&login);
-
-    #[cfg(target_os = "macos")]
-    {
-        let dock = CheckMenuItemBuilder::with_id("dock", "Show in Dock")
-            .checked(state.show_in_dock.load(Ordering::SeqCst))
-            .build(app)?;
-        menu = menu.item(&dock);
-    }
-
-    let log_item = MenuItemBuilder::with_id("log", "Open Log").build(app)?;
-    menu = menu.item(&log_item);
 
     // Alerts are useless if the system is quietly dropping them, and macOS
     // only lists an app under Notifications once it has posted one.
@@ -684,7 +727,23 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wr
         notifications = notifications.text("notify-settings", "Open Notification Settings…");
     }
     let notifications = notifications.build()?;
-    menu = menu.item(&notifications).separator();
+
+    let mut settings_menu = SubmenuBuilder::new(app, "Settings");
+    settings_menu = settings_menu.item(&login);
+    #[cfg(target_os = "macos")]
+    {
+        let dock = CheckMenuItemBuilder::with_id("dock", "Show in Dock")
+            .checked(state.show_in_dock.load(Ordering::SeqCst))
+            .build(app)?;
+        settings_menu = settings_menu.item(&dock);
+    }
+    settings_menu = settings_menu
+        .item(&styles)
+        .item(&notifications)
+        .separator()
+        .text("log", "Open Log");
+    let settings_menu = settings_menu.build()?;
+    menu = menu.item(&settings_menu);
 
     let about = MenuItemBuilder::with_id("about", "About HTTP Widgets…").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
@@ -697,6 +756,42 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wr
 fn autostart_enabled(app: &AppHandle) -> bool {
     use tauri_plugin_autostart::ManagerExt;
     app.autolaunch().is_enabled().unwrap_or(false)
+}
+
+/// The right-click path of link mode: the menu is detached from the tray, so
+/// nothing pops it natively and it is shown as a context menu at the cursor
+/// instead — which is exactly where the click just happened.
+#[cfg(target_os = "macos")]
+fn show_detached_tray_menu(app: &AppHandle) {
+    // With no link the menu is attached and macOS pops it natively; showing
+    // it again here would double it.
+    if app.state::<AppState>().tray_link.lock().unwrap().is_none() {
+        return;
+    }
+    let menu = app.state::<TrayRenderCache>().menu.lock().unwrap().clone();
+    let Some(menu) = menu else {
+        return;
+    };
+    let host = [CONFIG_WINDOW_LABEL, ABOUT_WINDOW_LABEL]
+        .iter()
+        .find_map(|label| app.get_webview_window(label))
+        .map(Ok)
+        .unwrap_or_else(|| {
+            // The app's webview outlives its first opening anyway, so
+            // building it hidden here only advances the inevitable.
+            build_config_window(app, HOME_ROUTE, false)
+        });
+    match host {
+        Ok(window) => {
+            use tauri::menu::ContextMenu;
+            if let Err(error) = menu.popup(window.as_ref().window()) {
+                scheduler::log_line(app, &format!("Could not show the tray menu: {error}"));
+            }
+        }
+        Err(error) => {
+            scheduler::log_line(app, &format!("No window could host the tray menu: {error}"));
+        }
+    }
 }
 
 /// A left click while a link is configured. The event can still arrive with
@@ -721,6 +816,9 @@ fn handle_tray_menu_event(app: &AppHandle, id: &str) {
         }
         "add" => {
             open_config(app, "new");
+        }
+        "home" => {
+            open_home(app);
         }
         "refresh" => {
             let handle = app.clone();
@@ -821,6 +919,12 @@ fn handle_tray_menu_event(app: &AppHandle, id: &str) {
             // Cmd-W and Cmd-Q both put the settings away; the app carries on
             // in the menu bar. The dirty check still runs.
             close_config_window(app, false);
+        }
+        "menu-esc" => {
+            // Reached by clicking the menu item; the key itself is caught by
+            // the event monitor before menu equivalents resolve.
+            #[cfg(target_os = "macos")]
+            handle_escape_key(app);
         }
         "menu-quit" | "quit" => {
             app.exit(0);
@@ -945,6 +1049,64 @@ pub fn close_about_window(app: &AppHandle) {
     }
 }
 
+/// WKWebView resolves a bare Escape as `cancelOperation:` before the page's
+/// key listeners or the menu bar's key equivalents ever see it, so the only
+/// reliable place to catch the key is a local event monitor ahead of the
+/// responder chain.
+#[cfg(target_os = "macos")]
+fn install_escape_monitor(app: &AppHandle) {
+    use objc2_app_kit::{NSEvent, NSEventMask};
+
+    const ESCAPE_KEY_CODE: u16 = 53;
+
+    let handle = app.clone();
+    let block = block2::RcBlock::new(move |event: std::ptr::NonNull<NSEvent>| -> *mut NSEvent {
+        let escape = unsafe { event.as_ref().keyCode() } == ESCAPE_KEY_CODE;
+        if escape && handle_escape_key(&handle) {
+            return std::ptr::null_mut();
+        }
+        event.as_ptr()
+    });
+    let monitor = unsafe {
+        NSEvent::addLocalMonitorForEventsMatchingMask_handler(NSEventMask::KeyDown, &block)
+    };
+    // The monitor lasts for the app's whole life; dropping the token would
+    // uninstall it.
+    std::mem::forget(monitor);
+}
+
+/// What Escape means depends on which window has it: the About window just
+/// hides, while the settings page has layered behaviour of its own (overlays
+/// close before the window does), so there the key is recreated for the page.
+/// Returns whether the key was consumed.
+#[cfg(target_os = "macos")]
+fn handle_escape_key(app: &AppHandle) -> bool {
+    let about_focused = app
+        .get_webview_window(ABOUT_WINDOW_LABEL)
+        .and_then(|window| window.is_focused().ok())
+        .unwrap_or(false);
+    let config_focused = app
+        .get_webview_window(CONFIG_WINDOW_LABEL)
+        .and_then(|window| window.is_focused().ok())
+        .unwrap_or(false);
+    scheduler::log_line(
+        app,
+        &format!("Escape seen: about_focused={about_focused} config_focused={config_focused}"),
+    );
+    if about_focused {
+        close_about_window(app);
+        return true;
+    }
+    if let Some(window) = app.get_webview_window(CONFIG_WINDOW_LABEL) {
+        if window.is_focused().unwrap_or(false) {
+            let _ =
+                window.eval("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))");
+            return true;
+        }
+    }
+    false
+}
+
 /// Without a menu, a macOS webview has no Cmd-C, Cmd-V or Cmd-A — the standard
 /// edit commands are menu key equivalents, not built into the text fields. The
 /// app menu also decides what Cmd-Q does: for a menu bar app, closing the
@@ -982,8 +1144,14 @@ fn install_app_menu(app: &AppHandle) -> tauri::Result<()> {
         .select_all()
         .build()?;
 
+    // WKWebView never hands a bare Escape to the page — macOS resolves it as
+    // a key equivalent first — so Escape lives here and is routed by hand.
+    let escape = MenuItemBuilder::with_id("menu-esc", "Close Window")
+        .accelerator("Escape")
+        .build(app)?;
     let window_menu = SubmenuBuilder::new(app, "Window")
         .item(&close)
+        .item(&escape)
         .minimize()
         .build()?;
 
@@ -1005,14 +1173,23 @@ fn install_app_menu(app: &AppHandle) -> tauri::Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// Config surface
+// App window
 //
-// Desktop opens a second window over the menu bar. Phones only ever have the
-// one webview, so there the same calls navigate it between the request list
-// and the form.
+// The interface is one page that routes by URL fragment: `#/` is the list of
+// values, `#/v/<id>` one value, `#/new` the add screen. Desktop keeps it in a
+// window over the menu bar; phones only ever have the one webview. Either way
+// the native side opens a route and the page does the rest.
 // ---------------------------------------------------------------------------
 
-fn encode_query_component(value: &str) -> String {
+const HOME_ROUTE: &str = "index.html#/";
+
+/// Where the close button starts, and how much taller than the buttons the
+/// title bar strip is. The page's bar is 52pt tall (`.app-bar-inner` in
+/// styles.css); these centre the buttons in it.
+#[cfg(target_os = "macos")]
+const TRAFFIC_LIGHT_INSET: (f64, f64) = (19.0, 28.0);
+
+fn encode_route_component(value: &str) -> String {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     let mut encoded = String::with_capacity(value.len());
     for byte in value.bytes() {
@@ -1027,15 +1204,24 @@ fn encode_query_component(value: &str) -> String {
     encoded
 }
 
+/// The page for one value, or the add screen for the placeholder id `new`.
 fn config_page(id: &str) -> String {
-    format!("config.html?id={}", encode_query_component(id))
+    if id == "new" {
+        "index.html#/new".into()
+    } else {
+        format!("index.html#/v/{}", encode_route_component(id))
+    }
 }
 
 fn navigate_window(window: &tauri::WebviewWindow<tauri::Wry>, page: &str) {
     // JSON string encoding keeps even hand-edited request IDs from becoming
-    // JavaScript when this native navigation crosses into the webview.
+    // JavaScript when this native navigation crosses into the webview. A page
+    // that has finished loading swaps its view in place; one that is still
+    // loading reads the fragment when it starts.
     if let Ok(page) = serde_json::to_string(page) {
-        let _ = window.eval(format!("location.href={page}"));
+        let _ = window.eval(format!(
+            "window.httpWidgets&&window.httpWidgets.open?window.httpWidgets.open({page}):(location.href={page})"
+        ));
     }
 }
 
@@ -1052,46 +1238,39 @@ pub fn open_config(app: &AppHandle, id: &str) {
 }
 
 #[cfg(mobile)]
-pub fn close_config_window(app: &AppHandle, force: bool) {
-    let dirty = app.state::<AppState>().ui_dirty.load(Ordering::SeqCst);
-    if force || !dirty {
-        app.state::<AppState>()
-            .ui_dirty
-            .store(false, Ordering::SeqCst);
-        navigate_main(app, "index.html");
-        return;
-    }
-    // Leaving the form is the only way back to the list, so unsaved edits get
-    // the same question the desktop close button asks. Non-blocking: the answer
-    // arrives once the sheet is dismissed, and the event loop keeps running.
-    let handle = app.clone();
-    app.dialog()
-        .message("Discard unsaved changes?")
-        .title("HTTP Widgets")
-        .buttons(MessageDialogButtons::OkCancelCustom(
-            "Discard".to_string(),
-            "Keep Editing".to_string(),
-        ))
-        .show(move |discard| {
-            if discard {
-                handle
-                    .state::<AppState>()
-                    .ui_dirty
-                    .store(false, Ordering::SeqCst);
-                navigate_main(&handle, "index.html");
-            }
-        });
+pub fn open_home(app: &AppHandle) {
+    navigate_main(app, HOME_ROUTE);
+}
+
+/// Phones have no window to put away. The page asks about unsaved edits
+/// itself before it leaves a draft, so this only has to go home.
+#[cfg(mobile)]
+pub fn close_config_window(app: &AppHandle, _force: bool) {
+    app.state::<AppState>()
+        .ui_dirty
+        .store(false, Ordering::SeqCst);
+    navigate_main(app, HOME_ROUTE);
 }
 
 #[cfg(desktop)]
 pub fn open_config(app: &AppHandle, id: &str) {
+    open_page(app, &config_page(id));
+}
+
+#[cfg(desktop)]
+pub fn open_home(app: &AppHandle) {
+    open_page(app, HOME_ROUTE);
+}
+
+#[cfg(desktop)]
+fn open_page(app: &AppHandle, page: &str) {
     let Some(window) = app.get_webview_window(CONFIG_WINDOW_LABEL) else {
-        create_config_window(app, id);
+        create_config_window(app, page);
         return;
     };
 
     let dirty = app.state::<AppState>().ui_dirty.load(Ordering::SeqCst);
-    let page = config_page(id);
+    let page = page.to_string();
 
     if !dirty {
         navigate_window(&window, &page);
@@ -1099,7 +1278,7 @@ pub fn open_config(app: &AppHandle, id: &str) {
         return;
     }
 
-    // Loading another request over unsaved edits needs an answer first; ask on
+    // Opening something else over unsaved edits needs an answer first; ask on
     // a side thread so the main thread keeps pumping events.
     if DISCARD_PROMPT_OPEN.swap(true, Ordering::SeqCst) {
         show_config_window(app, &window);
@@ -1174,35 +1353,50 @@ fn request_hide_config_window(
 }
 
 #[cfg(desktop)]
-fn create_config_window(app: &AppHandle, id: &str) {
-    let url = WebviewUrl::App(config_page(id).into());
+fn create_config_window(app: &AppHandle, page: &str) {
+    match build_config_window(app, page, true) {
+        Ok(_) => {}
+        Err(e) => {
+            scheduler::log_line(app, &format!("Could not create config window: {e}"));
+        }
+    }
+}
+
+#[cfg(desktop)]
+fn build_config_window(
+    app: &AppHandle,
+    page: &str,
+    show: bool,
+) -> tauri::Result<tauri::WebviewWindow<tauri::Wry>> {
+    let url = WebviewUrl::App(page.into());
 
     let builder = WebviewWindowBuilder::new(app, CONFIG_WINDOW_LABEL, url)
         .title("HTTP Widgets")
-        .inner_size(560.0, 720.0)
+        .inner_size(580.0, 760.0)
         .min_inner_size(440.0, 520.0)
         .resizable(true)
         .zoom_hotkeys_enabled(false)
         .visible(false);
 
-    // A settings panel, not a document window: no title text, and the traffic
-    // lights sit over the content at the same x as `.page`'s left padding, so
-    // the heading below lines up with them.
+    // No title text: the page's own bar is the title bar. The traffic lights
+    // are moved down onto its centre line, so they read as part of the same
+    // row as the title and its buttons rather than sitting in the corner.
     #[cfg(target_os = "macos")]
     let builder = builder
         .title_bar_style(tauri::TitleBarStyle::Overlay)
         .hidden_title(true)
+        .traffic_light_position(tauri::LogicalPosition::new(
+            TRAFFIC_LIGHT_INSET.0,
+            TRAFFIC_LIGHT_INSET.1,
+        ))
         .allow_link_preview(false);
 
-    match builder.build() {
-        Ok(window) => {
-            attach_close_guard(&window);
-            show_config_window(app, &window);
-        }
-        Err(e) => {
-            scheduler::log_line(app, &format!("Could not create config window: {e}"));
-        }
+    let window = builder.build()?;
+    attach_close_guard(&window);
+    if show {
+        show_config_window(app, &window);
     }
+    Ok(window)
 }
 
 /// Catches every way the window can be dismissed — the red button, Cmd-W and
@@ -1380,6 +1574,9 @@ mod tests {
 
     #[test]
     fn config_navigation_encodes_hand_edited_request_ids() {
-        assert_eq!(config_page("r 1'&?#"), "config.html?id=r%201%27%26%3F%23");
+        assert_eq!(config_page("r 1'&?#"), "index.html#/v/r%201%27%26%3F%23");
+        assert_eq!(config_page("r1"), "index.html#/v/r1");
+        // The placeholder id opens the add screen, not a value called "new".
+        assert_eq!(config_page("new"), "index.html#/new");
     }
 }

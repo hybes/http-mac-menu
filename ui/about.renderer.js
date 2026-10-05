@@ -12,6 +12,8 @@ for (const [id, target] of Object.entries(LINKS)) {
   });
 }
 
+// On macOS the window's Escape key equivalent fires first and this listener
+// never runs; it is the path for the other platforms' webviews.
 window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     event.preventDefault();

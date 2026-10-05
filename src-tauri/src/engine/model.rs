@@ -12,12 +12,14 @@ use std::collections::HashSet;
 
 /// All editable fields, in UI order. Values are kept as strings so a
 /// hand-edited or half-written settings file can never crash a load.
-pub const FIELDS: [&str; 15] = [
+pub const FIELDS: [&str; 17] = [
     "type",
     "label",
     "url",
     "headers",
     "json",
+    "http_template",
+    "empty_text",
     "multiplier",
     "provider",
     "coin",
@@ -29,6 +31,24 @@ pub const FIELDS: [&str; 15] = [
     "suffix",
     "timer",
 ];
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DisplayRule {
+    pub path: String,
+    pub kind: String,
+    #[serde(default)]
+    pub value: String,
+    pub template: String,
+}
+
+pub fn parse_display_rules(value: Option<&serde_json::Value>) -> Result<Vec<DisplayRule>, String> {
+    let Some(value) = value else {
+        return Ok(vec![]);
+    };
+    serde_json::from_value(value.clone()).map_err(|_| {
+        "Display conditions must be a list of fields, conditions and display text.".into()
+    })
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AlertRule {
@@ -117,6 +137,12 @@ pub struct Request {
     #[serde(default)]
     pub json: String,
     #[serde(default)]
+    pub http_template: String,
+    #[serde(default)]
+    pub empty_text: String,
+    #[serde(default)]
+    pub display_rules: Vec<DisplayRule>,
+    #[serde(default)]
     pub multiplier: String,
     #[serde(default)]
     pub provider: String,
@@ -197,6 +223,24 @@ impl Request {
     /// Validate values whose invalid form would otherwise change semantics or
     /// silently disable an alert. Blank holdings deliberately mean unit price.
     pub fn validate_for_save(&self) -> Result<(), String> {
+        if !self.crypto() {
+            for (index, rule) in self.display_rules.iter().enumerate() {
+                let label = format!("Display condition {}", index + 1);
+                if rule.path.trim().is_empty() || rule.template.trim().is_empty() {
+                    return Err(format!("{label} needs a field and display text."));
+                }
+                match rule.kind.as_str() {
+                    "empty" | "present" | "equals" | "not_equals" | "contains" | "before_now"
+                    | "after_now" => {}
+                    "above" | "below" => {
+                        if to_number(&serde_json::Value::String(rule.value.clone())).is_none() {
+                            return Err(format!("{label} needs a finite numeric threshold."));
+                        }
+                    }
+                    _ => return Err(format!("{label} has an unsupported condition.")),
+                }
+            }
+        }
         if self.crypto()
             && !self.holdings.trim().is_empty()
             && to_number(&serde_json::Value::String(self.holdings.clone())).is_none()
@@ -270,6 +314,9 @@ pub fn sanitize_values(values: &serde_json::Value) -> serde_json::Map<String, se
             raw.trim().to_string()
         };
         clean.insert(field.to_string(), serde_json::Value::String(trimmed));
+    }
+    if let Some(rules) = src.get("display_rules") {
+        clean.insert("display_rules".into(), rules.clone());
     }
     let kind = clean["type"].as_str().unwrap().to_string();
     clean.insert(
@@ -345,6 +392,9 @@ fn request_from_values(id: String, values: &serde_json::Map<String, serde_json::
         url: str_field("url"),
         headers: str_field("headers"),
         json: str_field("json"),
+        http_template: str_field("http_template"),
+        empty_text: str_field("empty_text"),
+        display_rules: parse_display_rules(values.get("display_rules")).unwrap_or_default(),
         multiplier: str_field("multiplier"),
         provider: str_field("provider"),
         coin: str_field("coin"),
@@ -366,6 +416,7 @@ pub fn blank_request() -> serde_json::Map<String, serde_json::Value> {
     }
     m.insert("provider".into(), serde_json::Value::String("auto".into()));
     m.insert("alerts".into(), serde_json::Value::Array(vec![]));
+    m.insert("display_rules".into(), serde_json::Value::Array(vec![]));
     m
 }
 
@@ -462,7 +513,7 @@ pub fn migrate_numbered_settings(
 pub fn display_name(request: &Request, index: usize) -> String {
     let label = request.label.trim();
     if label.is_empty() {
-        format!("Request {}", index + 1)
+        format!("Value {}", index + 1)
     } else {
         label.to_string()
     }

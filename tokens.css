@@ -5,17 +5,24 @@
 :root {
   color-scheme: light dark;
 
-  --color-paper: oklch(97.8% 0.006 250);
-  --color-paper-2: oklch(95.2% 0.009 250);
-  --color-paper-3: oklch(91.8% 0.013 250);
-  --color-surface: oklch(99.1% 0.003 250);
-  --color-surface-raised: oklch(100% 0.002 250);
-  --color-rule: oklch(87% 0.012 250);
-  --color-rule-2: oklch(73% 0.018 252);
-  --color-muted: oklch(47% 0.02 255);
-  --color-neutral: oklch(38% 0.022 256);
-  --color-ink-2: oklch(30% 0.025 258);
-  --color-ink: oklch(19% 0.027 258);
+  --color-paper: oklch(96.6% 0.004 255);
+  --color-paper-2: oklch(94% 0.006 255);
+  --color-paper-3: oklch(90.5% 0.008 255);
+  --color-surface: oklch(99.6% 0.002 255);
+  --color-surface-raised: oklch(100% 0 0);
+  --color-rule: oklch(89.5% 0.006 255);
+  --color-rule-2: oklch(76% 0.012 255);
+  --color-muted: oklch(49% 0.014 258);
+  --color-neutral: oklch(39% 0.016 258);
+  --color-ink-2: oklch(29% 0.018 258);
+  --color-ink: oklch(19% 0.02 258);
+  /* Three levels: fields are wells, the window is paper, buttons and lists
+   * sit on top. */
+  --color-field: oklch(100% 0 0);
+  --color-control: oklch(100% 0 0);
+  --color-control-hover: oklch(96.5% 0.004 255);
+  --color-control-border: oklch(83% 0.008 255);
+  --color-track: oklch(90.5% 0.008 255);
   --color-accent: oklch(55% 0.2 256);
   --color-accent-hover: oklch(50% 0.2 256);
   --color-accent-soft: oklch(93% 0.035 256);
@@ -30,10 +37,13 @@
   --color-error: oklch(50% 0.2 27);
   --color-error-soft: oklch(94% 0.035 27);
   --color-warning: oklch(54% 0.13 75);
-  --color-graphite: oklch(21% 0.018 258);
-  --color-graphite-2: oklch(27% 0.02 258);
-  --color-graphite-ink: oklch(94% 0.008 250);
+  --color-graphite: oklch(22% 0.012 258);
+  --color-graphite-2: oklch(30% 0.014 258);
+  --color-graphite-ink: oklch(95% 0.006 250);
   --color-selection: oklch(86% 0.055 256);
+
+  /* The up-and-down mark on a pop-up menu, as macOS draws it. */
+  --icon-select: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23565c69' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 4.6 6 2.1l2.5 2.5M3.5 7.4 6 9.9l2.5-2.5'/%3E%3C/svg%3E");
 
   --font-display:
     ui-rounded, 'SF Pro Rounded', -apple-system, BlinkMacSystemFont,
@@ -85,7 +95,7 @@
   --dur-short: 220ms;
   --dur-long: 420ms;
 
-  --shadow-card: 0 1px 2px oklch(19% 0.027 258 / 0.08);
+  --shadow-card: 0 1px 1.5px oklch(19% 0.02 258 / 0.07);
   --shadow-float: 0 12px 32px oklch(19% 0.027 258 / 0.16);
 
   --z-base: 1;
@@ -99,17 +109,22 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-paper: oklch(17% 0.018 258);
-    --color-paper-2: oklch(20.5% 0.02 258);
-    --color-paper-3: oklch(25% 0.022 258);
-    --color-surface: oklch(21.5% 0.02 258);
-    --color-surface-raised: oklch(25.5% 0.022 258);
-    --color-rule: oklch(30% 0.022 258);
-    --color-rule-2: oklch(44% 0.025 258);
-    --color-muted: oklch(72% 0.018 250);
-    --color-neutral: oklch(80% 0.014 250);
-    --color-ink-2: oklch(88% 0.01 250);
-    --color-ink: oklch(95% 0.006 250);
+    --color-paper: oklch(21% 0.006 262);
+    --color-paper-2: oklch(24.5% 0.007 262);
+    --color-paper-3: oklch(28.5% 0.008 262);
+    --color-surface: oklch(25% 0.007 262);
+    --color-surface-raised: oklch(29.5% 0.008 262);
+    --color-rule: oklch(31% 0.008 262);
+    --color-rule-2: oklch(43% 0.01 262);
+    --color-muted: oklch(69% 0.01 258);
+    --color-neutral: oklch(79% 0.008 258);
+    --color-ink-2: oklch(88% 0.006 258);
+    --color-ink: oklch(96% 0.004 258);
+    --color-field: oklch(17% 0.006 262);
+    --color-control: oklch(31.5% 0.008 262);
+    --color-control-hover: oklch(35.5% 0.009 262);
+    --color-control-border: oklch(38% 0.009 262);
+    --color-track: oklch(15.5% 0.006 262);
     --color-accent: oklch(67% 0.18 256);
     --color-accent-hover: oklch(72% 0.16 256);
     --color-accent-soft: oklch(29% 0.055 256);
@@ -122,12 +137,13 @@
     --color-error: oklch(72% 0.16 27);
     --color-error-soft: oklch(27% 0.05 27);
     --color-warning: oklch(76% 0.12 75);
-    --color-graphite: oklch(13% 0.014 258);
-    --color-graphite-2: oklch(19% 0.018 258);
-    --color-graphite-ink: oklch(94% 0.008 250);
+    --color-graphite: oklch(14.5% 0.006 262);
+    --color-graphite-2: oklch(27% 0.008 262);
+    --color-graphite-ink: oklch(95% 0.006 250);
     --color-selection: oklch(35% 0.07 256);
+    --icon-select: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23b4b9c4' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 4.6 6 2.1l2.5 2.5M3.5 7.4 6 9.9l2.5-2.5'/%3E%3C/svg%3E");
     --font-weight-body: 350;
-    --shadow-card: 0 1px 2px oklch(5% 0.012 258 / 0.24);
+    --shadow-card: 0 1px 1.5px oklch(5% 0.01 258 / 0.3);
     --shadow-float: 0 12px 32px oklch(5% 0.012 258 / 0.38);
   }
 }

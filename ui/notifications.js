@@ -1,5 +1,6 @@
-// Shared notification permission and test controls. Both pages use the same
-// small state machine so permission wording and button behaviour cannot drift.
+// Shared notification permission and test controls. Every view that shows them
+// uses this one small state machine, so permission wording and button
+// behaviour cannot drift.
 (() => {
   const PANEL_SELECTOR = '[data-notification-controls]';
   const panels = new Set();
@@ -94,7 +95,11 @@
   };
 
   const render = () => {
-    for (const panel of panels) renderPanel(panel);
+    for (const panel of panels) {
+      // Views come and go; a panel that has left the page is finished with.
+      if (panel.isConnected === false) panels.delete(panel);
+      else renderPanel(panel);
+    }
     window.dispatchEvent(new CustomEvent('notifications:updated'));
   };
 

@@ -1,5 +1,4 @@
-// The invoke surface — mirrors the old preload API one-for-one so the config
-// UI needed almost no changes, plus the new alert/cURL/preset commands.
+// The invoke surface: everything the app's page can ask the native side to do.
 
 use serde::Serialize;
 use serde_json::json;
@@ -33,6 +32,9 @@ fn request_to_values(request: &Request) -> serde_json::Value {
         "url": request.url,
         "headers": request.headers,
         "json": request.json,
+        "http_template": request.http_template,
+        "empty_text": request.empty_text,
+        "display_rules": request.display_rules,
         "multiplier": request.multiplier,
         "provider": request.crypto_provider(),
         "coin": request.coin,
@@ -64,7 +66,7 @@ pub fn load_config(app: AppHandle, id: String) -> LoadResult {
             position: requests.iter().position(|r| r.id == id).unwrap_or(0) + 1,
             is_new: false,
         },
-        // Either "Add Request…" or a request removed from another window.
+        // Either "Add Value…" or a value removed from the menu meanwhile.
         None => LoadResult {
             id: NEW_REQUEST_ID.into(),
             values: {
@@ -86,6 +88,7 @@ pub async fn save_config(
 ) -> Result<serde_json::Value, String> {
     let state = app.state::<AppState>();
     let clean = model::sanitize_values(&values);
+    model::parse_display_rules(values.get("display_rules"))?;
     // Alerts ride along with the form payload.
     let alerts = values
         .get("alerts")
@@ -112,7 +115,7 @@ pub async fn save_config(
                 if next_requests.len() >= model::MAX_REQUESTS {
                     return Ok(serde_json::json!({
                         "ok": false,
-                        "error": format!("You can have at most {}.", model::MAX_REQUESTS)
+                        "error": format!("You can have at most {} values.", model::MAX_REQUESTS)
                     }));
                 }
                 let mut request =
@@ -164,16 +167,21 @@ pub async fn save_config(
     let name = scheduler::name_for(&state.requests.lock().unwrap(), &saved_id);
     drop(commit);
     scheduler::log_line(&app, &format!("Saved {name}"));
-    crate::close_config_window(&app, true);
+    // The draft is saved, so there is nothing left to ask about. The page
+    // stays open and moves on to the value it was given the id of.
+    state
+        .ui_dirty
+        .store(false, std::sync::atomic::Ordering::SeqCst);
     crate::render_tray(&app);
     tauri::async_runtime::spawn({
         let app = app.clone();
+        let saved_id = saved_id.clone();
         async move {
             scheduler::refresh_request(&app, &saved_id).await;
             crate::render_tray(&app);
         }
     });
-    Ok(serde_json::json!({ "ok": true }))
+    Ok(serde_json::json!({ "ok": true, "id": saved_id }))
 }
 
 fn parse_alerts(value: &serde_json::Value) -> Result<Vec<crate::engine::model::AlertRule>, String> {
@@ -300,6 +308,115 @@ pub async fn set_tray_link(app: AppHandle, link: String) -> Result<Option<String
 #[tauri::command]
 pub fn get_tray_link(app: AppHandle) -> Option<String> {
     app.state::<AppState>().tray_link.lock().unwrap().clone()
+}
+
+/// Everything the Settings screen shows for the menu bar or tray. A setting
+/// that does not exist on this platform is null, and the screen leaves it out.
+#[tauri::command]
+pub fn get_preferences(app: AppHandle) -> serde_json::Value {
+    use crate::engine::indicators::{glyph, MARK_FALL, MARK_RISE, STYLES};
+
+    let state = app.state::<AppState>();
+    let styles: Vec<serde_json::Value> = STYLES
+        .iter()
+        .map(|(id, label)| {
+            json!({
+                "id": id,
+                "label": label,
+                "rise": glyph(MARK_RISE, id).to_string(),
+                "fall": glyph(MARK_FALL, id).to_string(),
+            })
+        })
+        .collect();
+
+    #[cfg(desktop)]
+    let launch_at_login = {
+        use tauri_plugin_autostart::ManagerExt;
+        json!(app.autolaunch().is_enabled().unwrap_or(false))
+    };
+    #[cfg(not(desktop))]
+    let launch_at_login = serde_json::Value::Null;
+
+    let show_in_dock = if cfg!(target_os = "macos") {
+        json!(state.show_in_dock.load(std::sync::atomic::Ordering::SeqCst))
+    } else {
+        serde_json::Value::Null
+    };
+
+    let indicator = state.indicator.lock().unwrap().clone();
+    let tray_link = state.tray_link.lock().unwrap().clone();
+    json!({
+        "indicator": indicator,
+        "indicatorStyles": styles,
+        "trayLink": tray_link,
+        "launchAtLogin": launch_at_login,
+        "showInDock": show_in_dock,
+    })
+}
+
+/// The rise and fall marks drawn in the menu bar title. Answers with the
+/// style actually stored, which is the default for an unknown id.
+#[tauri::command]
+pub async fn set_indicator_style(app: AppHandle, style: String) -> Result<String, String> {
+    let style = crate::engine::indicators::normalize_style(&style);
+    #[cfg(desktop)]
+    {
+        set_indicator_preference(&app, style.clone()).await?;
+        scheduler::log_line(&app, &format!("Rise / fall icon set to {style}"));
+        crate::render_tray(&app);
+    }
+    #[cfg(not(desktop))]
+    let _ = &app;
+    Ok(style)
+}
+
+#[tauri::command]
+pub fn set_launch_at_login(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_autostart::ManagerExt;
+        let autolaunch = app.autolaunch();
+        let result = if enabled {
+            autolaunch.enable()
+        } else {
+            autolaunch.disable()
+        };
+        result.map_err(|error| format!("Could not change Launch at Login: {error}"))?;
+        scheduler::log_line(&app, &format!("Launch at login set to {enabled}"));
+        crate::render_tray(&app);
+        Ok(autolaunch.is_enabled().unwrap_or(enabled))
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (&app, enabled);
+        Err("Launch at login is not available on this device.".into())
+    }
+}
+
+#[tauri::command]
+pub async fn set_show_in_dock(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    #[cfg(desktop)]
+    {
+        let current = app
+            .state::<AppState>()
+            .show_in_dock
+            .load(std::sync::atomic::Ordering::SeqCst);
+        let shown = if current == enabled {
+            current
+        } else {
+            toggle_dock_preference(&app).await?
+        };
+        scheduler::log_line(&app, &format!("Show in Dock set to {shown}"));
+        #[cfg(target_os = "macos")]
+        crate::apply_activation_policy(&app);
+        crate::render_tray(&app);
+        Ok(shown)
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (&app, enabled);
+        Err("The Dock is not available on this device.".into())
+    }
 }
 
 fn reconcile_rule_state_snapshot(
@@ -445,20 +562,44 @@ pub async fn remove_config(app: AppHandle, id: String) -> Result<serde_json::Val
     }
     drop(commit);
     scheduler::log_line(&app, &format!("Removed {removed_name}"));
-    crate::close_config_window(&app, true);
+    state
+        .ui_dirty
+        .store(false, std::sync::atomic::Ordering::SeqCst);
     crate::render_tray(&app);
     Ok(serde_json::json!({ "ok": true }))
 }
 
 #[tauri::command]
-pub async fn test_config(values: serde_json::Value) -> serde_json::Value {
+pub async fn test_config(values: serde_json::Value, response: Option<String>) -> serde_json::Value {
     let clean = model::sanitize_values(&values);
     let probe = model::request_from_clean("probe", &clean);
+    let client = crate::engine::sources::client();
+    if !probe.crypto() {
+        let data = match response {
+            Some(response)
+                if response.len() <= crate::engine::constants::MAX_HTTP_RESPONSE_BYTES =>
+            {
+                serde_json::from_str(&response).map_err(|_| "Invalid preview response".to_string())
+            }
+            Some(_) => Err("Response is larger than the 2 MB limit".into()),
+            None => crate::engine::sources::fetch_http_response(client, &probe).await,
+        };
+        let data = match data {
+            Ok(data) => data,
+            Err(error) => return json!({ "ok": false, "error": error }),
+        };
+        let result = model::parse_display_rules(values.get("display_rules"))
+            .and_then(|_| probe.validate_for_save())
+            .and_then(|_| crate::engine::sources::http_value_from_response(&data, &probe));
+        return match result {
+            Ok(f) => json!({ "ok": true, "value": to_text(&f.text), "response": data.to_string() }),
+            Err(error) => json!({ "ok": false, "error": error, "response": data.to_string() }),
+        };
+    }
     if let Err(error) = probe.validate_for_save() {
         return serde_json::json!({ "ok": false, "error": error });
     }
-    let client = crate::engine::sources::client();
-    let result = if probe.crypto() {
+    let result = {
         // No shared caches here: the Test button must not touch live state.
         let mut cache = std::collections::HashMap::new();
         let mut history = crate::engine::price_history::PriceHistory::default();
@@ -471,8 +612,6 @@ pub async fn test_config(values: serde_json::Value) -> serde_json::Value {
             false,
         )
         .await
-    } else {
-        crate::engine::sources::fetch_http_value(client, &probe).await
     };
     match result {
         Ok(f) => serde_json::json!({ "ok": true, "value": to_text(&f.text) }),
@@ -604,16 +743,6 @@ pub fn close_config(app: AppHandle) {
     crate::close_config_window(&app, false);
 }
 
-/// Compatibility endpoint for older renderers that still measure their
-/// content. The Workbench window is user-resizable and must not jump whenever
-/// a disclosure, validation message or notification banner changes height.
-#[tauri::command]
-pub fn fit_window(_window: tauri::WebviewWindow, _height: f64) -> serde_json::Value {
-    // `true` keeps scrolling enabled in the legacy renderer while doing no
-    // native resize work.
-    serde_json::json!({ "clamped": true })
-}
-
 #[tauri::command]
 pub fn accent_color() -> Option<String> {
     crate::accent::accent_color()
@@ -640,11 +769,11 @@ pub async fn refresh_request_now(app: AppHandle, id: String) -> serde_json::Valu
             .map(|request| request.configured())
     };
     match ready {
-        None => return serde_json::json!({ "ok": false, "error": "Request not found." }),
+        None => return serde_json::json!({ "ok": false, "error": "That value is no longer here." }),
         Some(false) => {
             return serde_json::json!({
                 "ok": false,
-                "error": "Finish setting up this request before refreshing it."
+                "error": "Finish setting this value up before refreshing it."
             });
         }
         Some(true) => {}
@@ -713,7 +842,7 @@ pub fn copy_request_value(app: AppHandle, id: String) -> serde_json::Value {
         .iter()
         .any(|request| request.id == id)
     {
-        return serde_json::json!({ "ok": false, "error": "Request not found." });
+        return serde_json::json!({ "ok": false, "error": "That value is no longer here." });
     }
     let value = state
         .status
@@ -726,7 +855,7 @@ pub fn copy_request_value(app: AppHandle, id: String) -> serde_json::Value {
         Some(value) if !value.is_empty() => write_clipboard_text(&app, value, 1),
         _ => serde_json::json!({
             "ok": false,
-            "error": "This request does not have a value to copy yet."
+            "error": "There is nothing to copy yet."
         }),
     }
 }
@@ -771,6 +900,9 @@ pub struct ListedRequest {
     pub attempted_at: i64,
     pub updated_at: i64,
     pub failures: u32,
+    /// How many alert rules hang off it, so the list can tell whether
+    /// notification permission matters yet.
+    pub alerts: usize,
     pub points: Vec<crate::engine::series::SeriesPoint>,
 }
 
@@ -797,6 +929,7 @@ pub fn list_requests(app: AppHandle) -> serde_json::Value {
                 attempted_at: current.map(|status| status.attempted_at).unwrap_or(0),
                 updated_at: current.map(|status| status.updated_at).unwrap_or(0),
                 failures: current.map(|status| status.failures).unwrap_or(0),
+                alerts: r.alerts.len(),
                 points: history.snapshot_points(&r.id, now),
             }
         })
@@ -891,6 +1024,20 @@ pub async fn confirm_remove(app: AppHandle, name: String) -> bool {
         .blocking_show()
 }
 
+/// Leaving a draft with unsaved edits. Asked natively for the same reason as
+/// removal, and so it matches the question the window's close button asks.
+#[tauri::command]
+pub async fn confirm_discard(app: AppHandle) -> bool {
+    app.dialog()
+        .message("Discard unsaved changes?")
+        .title("HTTP Widgets")
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Discard".to_string(),
+            "Keep Editing".to_string(),
+        ))
+        .blocking_show()
+}
+
 /// The tail of the log. Desktop has "Open Log" in the tray menu; a phone has
 /// no way to reach the file at all, which makes a background refresh — the one
 /// thing that happens while nobody is looking — impossible to confirm.
@@ -917,6 +1064,77 @@ mod tests {
     use std::collections::HashSet;
 
     use super::{list_presets, ListedRequest};
+
+    #[tokio::test]
+    async fn http_preview_reuses_data_and_matches_scheduled_fetches_without_masking_failures() {
+        use serde_json::json;
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            for (status, body) in [
+                ("200 OK", r#"{"data":{"value":null,"status":"waiting"}}"#),
+                ("200 OK", r#"{"data":{"value":12,"status":"ready"}}"#),
+                ("503 Service Unavailable", "unavailable"),
+                ("200 OK", "<html>upstream error</html>"),
+            ] {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .unwrap();
+                let _ = socket.read(&mut [0; 4096]).unwrap();
+                write!(
+                    socket,
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+        });
+        let mut values =
+            json!({ "type": "http", "url": url, "json": "data.value", "empty_text": "Waiting" });
+        let first = super::test_config(values.clone(), None).await;
+        assert_eq!(first["value"], "Waiting");
+        values["display_rules"] = json!([{"path": "data.value", "kind": "empty", "value": "", "template": "Status: {data.status}"}]);
+        let cached = super::test_config(
+            values.clone(),
+            Some(first["response"].as_str().unwrap().into()),
+        )
+        .await;
+        assert_eq!(cached["value"], "Status: waiting");
+
+        let request = crate::engine::model::request_from_clean(
+            "r1",
+            &crate::engine::model::sanitize_values(&values),
+        );
+        let loaded = super::request_to_values(&request);
+        assert_eq!(loaded["display_rules"], values["display_rules"]);
+        assert_eq!(loaded["empty_text"], "Waiting");
+        let fetched =
+            crate::engine::sources::fetch_http_value(crate::engine::sources::client(), &request)
+                .await
+                .unwrap();
+        assert_eq!(fetched.text, "12");
+        assert_eq!(fetched.numeric, Some(12.0));
+        let preview = super::test_config(
+            values.clone(),
+            Some(r#"{"data":{"value":12,"status":"ready"}}"#.into()),
+        )
+        .await;
+        assert_eq!(preview["value"], fetched.text);
+
+        let failure = super::test_config(values.clone(), None).await;
+        assert_eq!(failure["ok"], false);
+        assert!(failure["error"].as_str().unwrap().contains("503"));
+        assert!(failure.get("response").is_none());
+        let malformed = super::test_config(values, None).await;
+        assert_eq!(malformed["ok"], false);
+        assert!(malformed["error"]
+            .as_str()
+            .unwrap()
+            .contains("not valid JSON"));
+        server.join().unwrap();
+    }
 
     #[test]
     fn preset_ids_are_stable_unique_and_described() {
@@ -973,12 +1191,14 @@ mod tests {
             attempted_at: 100,
             updated_at: 90,
             failures: 2,
+            alerts: 1,
             points: Vec::new(),
         })
         .unwrap();
         assert_eq!(value["attemptedAt"], 100);
         assert_eq!(value["updatedAt"], 90);
         assert_eq!(value["failures"], 2);
+        assert_eq!(value["alerts"], 1);
         assert!(value.get("attempted_at").is_none());
     }
 }

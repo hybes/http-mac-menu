@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "HTTP Widgets default capability",
   "windows": ["config", "main", "about"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "core:window:allow-start-dragging"]
 }

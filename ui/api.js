@@ -1,19 +1,18 @@
-// Bridge to the Rust backend: every command the two pages can call.
+// Bridge to the Rust backend: every command the app's views can call.
 const invoke = (cmd, args = {}) => window.__TAURI__.core.invoke(cmd, args);
 
 window.api = {
   loadConfig: (id) => invoke('load_config', { id }),
   saveConfig: (id, values) => invoke('save_config', { id, values }),
   removeConfig: (id) => invoke('remove_config', { id }),
-  testConfig: (values) => invoke('test_config', { values }),
+  testConfig: (values, response = null) =>
+    invoke('test_config', { values, response }),
+  // Desktop: put the window away. The native side asks about unsaved edits.
   close: () => invoke('close_config'),
-  // Native chrome: size the window to its content and match the system accent.
-  fitWindow: (height) => invoke('fit_window', { height }),
   accentColor: () => invoke('accent_color'),
   importCurl: (text) => invoke('import_curl', { text }),
   listPresets: () => invoke('list_presets'),
   setDirty: (dirty) => invoke('set_dirty', { dirty }),
-  // The list page is the home screen on phones, where there is no menu bar.
   listRequests: () => invoke('list_requests'),
   refreshAll: () => invoke('refresh_all'),
   refreshRequestNow: (id) => invoke('refresh_request_now', { id }),
@@ -34,21 +33,25 @@ window.api = {
     return invoke('open_notification_settings');
   },
   appInfo: () => invoke('app_info'),
-  // The About page's outbound links; the Rust side owns the URL table.
+  // Outbound links resolve to fixed URLs on the Rust side.
   openProjectLink: (target) => invoke('open_project_link', { target }),
   closeAbout: () => invoke('close_about'),
-  // The tray's left-click link preference, saved on its own outside the
-  // request form.
-  getTrayLink: () => invoke('get_tray_link'),
+  // App preferences save themselves, one at a time, outside any value's draft.
+  preferences: () => invoke('get_preferences'),
   setTrayLink: (link) => invoke('set_tray_link', { link }),
+  setIndicatorStyle: (style) => invoke('set_indicator_style', { style }),
+  setLaunchAtLogin: (enabled) => invoke('set_launch_at_login', { enabled }),
+  setShowInDock: (enabled) => invoke('set_show_in_dock', { enabled }),
+  // Native, not window.confirm: iOS answers that one yes without asking.
   confirmRemove: (name) => invoke('confirm_remove', { name }),
+  confirmDiscard: () => invoke('confirm_discard'),
   readLog: () => invoke('read_log'),
   log: (message) => invoke('ui_log', { message }),
 };
 
 // Phones get one full-screen webview and no keyboard, so the layout and a few
 // controls differ. This drives it rather than a width breakpoint: the desktop
-// config window is 520px, narrower than a phone on its side.
+// window is 580px, narrower than a phone on its side.
 const root = document.documentElement;
 const PLATFORM_CLASSES = [
   'platform-macos',
@@ -141,20 +144,21 @@ document.addEventListener('keydown', (event) => {
 });
 
 // A guess good enough to style the first paint, since this file runs before
-// the page is drawn and long before the backend can answer.
+// the page is drawn and long before the backend can answer. The answer is
+// kept as a promise so views can wait for the real platform.
 applyAppInfo({ mobile: window.matchMedia('(pointer: coarse)').matches });
-window.addEventListener('DOMContentLoaded', () => {
-  window.api
-    .appInfo()
-    .then(applyAppInfo)
-    .catch(() => {
-      /* keep the guess */
-    });
+window.appInfoReady = new Promise((resolve) => {
+  window.addEventListener('DOMContentLoaded', () => {
+    window.api
+      .appInfo()
+      .then((info) => resolve(applyAppInfo(info)))
+      .catch(() => resolve(applyAppInfo()));
 
-  window.api
-    .accentColor()
-    .then(applyAccentColor)
-    .catch(() => {
-      /* keep the cobalt fallback */
-    });
+    window.api
+      .accentColor()
+      .then(applyAccentColor)
+      .catch(() => {
+        /* keep the cobalt fallback */
+      });
+  });
 });
