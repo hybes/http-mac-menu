@@ -391,6 +391,51 @@ fn render_http_template(
     Ok(out)
 }
 
+/// Whether the selected value is shown as the number one, which is what
+/// separates "1 order" from "2 orders".
+fn shows_one(value: &serde_json::Value, cfg: &super::model::Request) -> bool {
+    to_number(value).is_some()
+        && format_http_value(value, cfg)
+            .replace(',', "")
+            .trim()
+            .parse::<f64>()
+            == Ok(1.0)
+}
+
+/// A plural ending in brackets straight after a letter, as in `order(s)` or
+/// `box(es)`, is dropped beside the number one and kept beside anything else.
+/// Other brackets, such as " (GBP)", are left as typed.
+fn plural_affix(affix: &str, one: bool) -> String {
+    let mut out = String::with_capacity(affix.len());
+    let mut rest = affix;
+    while let Some(open) = rest.find('(') {
+        let (word, bracket) = rest.split_at(open);
+        out.push_str(word);
+        let ending = bracket[1..]
+            .split_once(')')
+            .map(|(ending, _)| ending)
+            .filter(|ending| {
+                word.chars().next_back().is_some_and(char::is_alphabetic)
+                    && !ending.is_empty()
+                    && ending.chars().all(char::is_alphabetic)
+            });
+        match ending {
+            Some(ending) => {
+                if !one {
+                    out.push_str(ending);
+                }
+                rest = &bracket[ending.len() + 2..];
+            }
+            None => {
+                out.push('(');
+                rest = &bracket[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// The editor preview and every scheduled HTTP refresh share this formatter.
 /// Conditions see the whole response, even when the selected field is absent.
 pub fn format_http_response(
@@ -399,6 +444,7 @@ pub fn format_http_response(
     now: i64,
 ) -> Result<String, String> {
     let selected = resolve_json_path(data, cfg.json.trim());
+    let one = selected.as_ref().is_ok_and(|value| shows_one(value, cfg));
     let text = if let Some(rule) = cfg
         .display_rules
         .iter()
@@ -419,7 +465,9 @@ pub fn format_http_response(
     };
     Ok(cap_display_value(format!(
         "{}{}{}",
-        cfg.prefix, text, cfg.suffix
+        plural_affix(&cfg.prefix, one),
+        text,
+        plural_affix(&cfg.suffix, one)
     )))
 }
 
@@ -534,6 +582,55 @@ mod tests {
         plain.empty_text.clear();
         assert!(super::format_http_response(&json!({"data": {"value": null}}), &plain, 0).is_err());
         assert!(super::format_http_response(&json!({"data": {}}), &plain, 0).is_err());
+    }
+
+    #[test]
+    fn bracketed_plural_endings_follow_the_number_that_is_shown() {
+        let mut cfg = request_from_clean(
+            "test",
+            &sanitize_values(&json!({"json": "count", "suffix": " order(s)"})),
+        );
+        for (count, expected) in [
+            (json!(0), "0 orders"),
+            (json!(1), "1 order"),
+            (json!("1"), "1 order"),
+            (json!(2), "2 orders"),
+            (json!(1.5), "1.5 orders"),
+            (json!(-1), "-1 orders"),
+            (json!("one"), "one orders"),
+            (json!(true), "true orders"),
+        ] {
+            assert_eq!(
+                super::format_http_response(&json!({"count": count}), &cfg, 0).unwrap(),
+                expected
+            );
+        }
+
+        // The number as shown decides, after the multiplier and rounding.
+        cfg.multiplier = "0.001".into();
+        cfg.length = "0".into();
+        cfg.prefix = "Box(es): ".into();
+        cfg.suffix = " (GBP) match(es)(s) ms (s) a(1) b()".into();
+        for (count, expected) in [
+            (1000, "Box: 1 (GBP) match(s) ms (s) a(1) b()"),
+            (1400, "Box: 1 (GBP) match(s) ms (s) a(1) b()"),
+            (12000, "Boxes: 12 (GBP) matches(s) ms (s) a(1) b()"),
+        ] {
+            assert_eq!(
+                super::format_http_response(&json!({"count": count}), &cfg, 0).unwrap(),
+                expected
+            );
+        }
+
+        // Fallback text has no number beside it, so the plural stands.
+        cfg.prefix.clear();
+        cfg.suffix = " order(s)".into();
+        cfg.empty_text = "No".into();
+        assert_eq!(
+            super::format_http_response(&json!({}), &cfg, 0).unwrap(),
+            "No orders"
+        );
+        assert_eq!(super::plural_affix("naïve(s) café(s", true), "naïve café(s");
     }
 
     #[test]

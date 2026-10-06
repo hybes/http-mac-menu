@@ -96,7 +96,9 @@ date comparisons and formatting use ISO 8601 timestamps.
 After a fetch, edits preview the cached response through the same Rust
 formatter used by scheduled refreshes. The refresh button on the preview
 fetches fresh data. Relative times update at the configured refresh interval.
-Text before and after wraps the final text. Graphs and numeric alerts continue
+Text before and after wraps the final text. For an API value, a plural ending
+in brackets follows the number shown: ` order(s)` gives `1 order` and
+`2 orders`, and `box(es)` works the same way. Graphs and numeric alerts continue
 to use the selected numeric field; display conditions only change the text.
 HTTP failures and invalid JSON still report errors, rather than showing the
 null fallback.

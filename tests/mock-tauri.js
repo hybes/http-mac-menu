@@ -363,7 +363,9 @@
         'Response value is null. Set text for null or missing values.'
       );
     } else text = number(selected);
-    return `${values.prefix || ''}${text}${values.suffix || ''}`;
+    const one = typeof selected !== 'object' && Number(number(selected)) === 1;
+    const affix = (value) => window.httpWidgetsUi.pluralAffix(value, one);
+    return `${affix(values.prefix)}${text}${affix(values.suffix)}`;
   };
 
   const COINS = {

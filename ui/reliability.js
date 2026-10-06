@@ -276,6 +276,14 @@
     return parts.join(' · ');
   };
 
+  // engine::format reads a plural ending in brackets straight after a letter,
+  // such as order(s), as "order" beside the number one and "orders" otherwise.
+  const pluralAffix = (text, one) =>
+    String(text ?? '').replace(
+      /(\p{Alphabetic})\((\p{Alphabetic}+)\)/gu,
+      one ? '$1' : '$1$2'
+    );
+
   const ALERT_KINDS = [
     ['above', 'goes above'],
     ['below', 'goes below'],
@@ -441,6 +449,7 @@
     describeField,
     displayMode,
     describeDisplay,
+    pluralAffix,
     describeCooldown,
     describeAlert,
     describeAlerts,

@@ -1464,7 +1464,7 @@
 
     // --- Display --------------------------------------------------------
 
-    const affixRow = () => {
+    const affixRow = (hint) => {
       const prefix = field('prefix', {
         placeholder: 'Before',
         'aria-label': 'Text before the value',
@@ -1483,16 +1483,24 @@
       });
       syncers.push(() => {
         const text = preview.state === 'ok' ? (preview.text ?? '') : '';
-        const wrapped =
-          text.length > draft.prefix.length + draft.suffix.length &&
-          text.startsWith(draft.prefix) &&
-          text.endsWith(draft.suffix);
-        sample.textContent = wrapped
+        // An API value's order(s) arrives as "order" or "orders"; a crypto
+        // value keeps the brackets as typed.
+        const wrap = (
+          draft.type === 'crypto'
+            ? [[draft.prefix, draft.suffix]]
+            : [false, true].map((one) => [
+                ui.pluralAffix(draft.prefix, one),
+                ui.pluralAffix(draft.suffix, one),
+              ])
+        ).find(
+          ([before, after]) =>
+            text.length > before.length + after.length &&
+            text.startsWith(before) &&
+            text.endsWith(after)
+        );
+        sample.textContent = wrap
           ? ui.truncate(
-              text.slice(
-                draft.prefix.length,
-                text.length - draft.suffix.length
-              ),
+              text.slice(wrap[0].length, text.length - wrap[1].length),
               18
             )
           : 'value';
@@ -1502,10 +1510,7 @@
         { class: 'field' },
         h('span', { class: 'field-label', text: 'Before and after' }),
         h('div', { class: 'affix-row' }, prefix, sample, suffix),
-        h('span', {
-          class: 'hint',
-          text: 'For units and symbols, such as £ or °C. Spaces are kept.',
-        })
+        h('span', { class: 'hint', text: hint })
       );
     };
 
@@ -1820,7 +1825,9 @@
           modes.element
         ),
         custom,
-        affixRow(),
+        affixRow(
+          'For units and symbols, such as £ or °C. Spaces are kept. Write order(s) to show 1 order and 2 orders.'
+        ),
         exceptions,
       ];
     };
@@ -1942,7 +1949,7 @@
         ),
         custom,
         h('div', { class: 'field-pair' }, labelled('Decimal places', decimals)),
-        affixRow(),
+        affixRow('For units and symbols, such as £ or °C. Spaces are kept.'),
       ];
     };
 

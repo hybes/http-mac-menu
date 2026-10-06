@@ -534,6 +534,16 @@ test('every step states its setting in plain words', () => {
     ui.describeDisplay({ type: 'crypto', holdings: '3' }),
     '{symbol} {balance} {change24h}'
   );
+  for (const [affix, one, many] of [
+    [' order(s)', ' order', ' orders'],
+    ['Box(es): ', 'Box: ', 'Boxes: '],
+    [' (GBP) ms (s) a(1) b()', ' (GBP) ms (s) a(1) b()'],
+    ['match(es)(s)', 'match(s)', 'matches(s)'],
+    ['café(s', 'café(s'],
+  ]) {
+    assert.equal(ui.pluralAffix(affix, true), one, affix);
+    assert.equal(ui.pluralAffix(affix, false), many ?? one, affix);
+  }
 
   assert.equal(ui.describeAlerts({ alerts: [] }), 'None');
   assert.equal(
